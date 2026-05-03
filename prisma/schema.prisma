@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model RawMarketData {
+  id           String   @id @default(cuid())
+  source       String
+  symbol       String
+  payload      String
+  fetchedAt    DateTime
+  status       String
+  errorMessage String?
+  createdAt    DateTime @default(now())
+}
+
+model NormalizedMarketSnapshot {
+  id           String   @id @default(cuid())
+  symbol       String
+  snapshotDate DateTime
+  open         Float
+  high         Float
+  low          Float
+  close        Float
+  volume       Float?
+  source       String
+  version      String
+  createdAt    DateTime @default(now())
+}
+
+model InsightSummary {
+  id           String   @id @default(cuid())
+  symbol       String
+  summaryTitle String
+  summaryText  String
+  drivers      String
+  tags         String
+  sourceRefs   String
+  createdAt    DateTime @default(now())
+}
+
+model PredictionResult {
+  id               String   @id @default(cuid())
+  symbol           String
+  userQuery        String
+  horizon          String
+  direction        String
+  confidence       Float
+  rationale        String
+  riskNotes        String
+  modelVersion     String
+  dataSnapshotRefs String
+  createdAt        DateTime @default(now())
+}
+
+model TaskRunLog {
+  id          String   @id @default(cuid())
+  taskType    String
+  status      String
+  inputRef    String?
+  outputRef   String?
+  startedAt   DateTime
+  finishedAt  DateTime?
+  errorMessage String?
+  createdAt   DateTime @default(now())
+}

@@ -1,0 +1,1 @@
+const extrangeDocUrl = 'https://www.alphavantage.co/documentation/'
