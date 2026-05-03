@@ -72,3 +72,71 @@ export async function getTaskHistory(
   if (res.data.code !== 0) throw new Error(res.data.message)
   return res.data.data as PaginatedResult<TaskLog>
 }
+
+export interface ChatStreamOptions {
+  message: string
+  symbol?: string
+  horizon?: string
+  history?: { role: "user" | "assistant"; content: string }[]
+  onChunk: (content: string) => void
+  onError?: (error: string) => void
+  onDone?: () => void
+  signal?: AbortSignal
+}
+
+export async function streamChatMessage(opts: ChatStreamOptions) {
+  const { message, symbol = "USDCNH", horizon = "T+2", history = [], onChunk, onError, onDone, signal } = opts
+
+  const response = await fetch("/api/v1/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, symbol, horizon, history }),
+    signal,
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    onError?.(`请求失败 (${response.status}): ${text}`)
+    return
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) {
+    onError?.("无法读取响应流")
+    return
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split("\n")
+    buffer = lines.pop() ?? ""
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || !trimmed.startsWith("data: ")) continue
+      const data = trimmed.slice(6)
+      if (data === "[DONE]") {
+        onDone?.()
+        return
+      }
+      try {
+        const parsed = JSON.parse(data)
+        if (parsed.error) {
+          onError?.(parsed.error)
+          return
+        }
+        if (parsed.content) onChunk(parsed.content)
+      } catch {
+        // skip malformed chunks
+      }
+    }
+  }
+
+  onDone?.()
+}

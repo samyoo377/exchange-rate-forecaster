@@ -7,3 +7,4 @@ dist
 .env.local
 pnpm-lock.yaml
 prisma/dev.db
+.env.development
