@@ -34,6 +34,13 @@
 
     <el-alert v-if="marketStore.error" :title="marketStore.error" type="error" show-icon closable style="margin-bottom:12px" />
 
+    <!-- Market Summary Bar -->
+    <MarketSummaryBar
+      :indicators="marketStore.indicators"
+      :digest="marketStore.newsDigest"
+      :prediction="marketStore.latestPrediction"
+    />
+
     <el-row :gutter="16" class="dashboard-body">
       <!-- left: chat panel -->
       <el-col :xs="24" :md="8">
@@ -49,12 +56,12 @@
         </el-row>
         <el-row :gutter="12" style="margin-bottom:12px">
           <el-col :span="24">
-            <IndicatorCharts :series="marketStore.series" />
+            <IndicatorCharts :series="marketStore.series" :configs="marketStore.indicatorConfigs" />
           </el-col>
         </el-row>
         <el-row :gutter="12">
           <el-col :xs="24" :md="16">
-            <IndicatorCardGroup :indicators="marketStore.indicators" />
+            <IndicatorCardGroup :indicators="marketStore.indicators" :configs="marketStore.indicatorConfigs" />
           </el-col>
           <el-col :xs="24" :md="8">
             <PredictionCard :prediction="marketStore.latestPrediction" />
@@ -73,6 +80,7 @@ import MarketChart from "../components/MarketChart.vue"
 import IndicatorCharts from "../components/IndicatorCharts.vue"
 import IndicatorCardGroup from "../components/IndicatorCardGroup.vue"
 import PredictionCard from "../components/PredictionCard.vue"
+import MarketSummaryBar from "../components/MarketSummaryBar.vue"
 import { ElMessage } from "element-plus"
 import { computed } from "vue"
 

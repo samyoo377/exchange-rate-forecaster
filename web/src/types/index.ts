@@ -13,6 +13,7 @@ export interface OhlcBar {
   minusDi14?: number
   ao?: number
   mom10?: number
+  [key: string]: any
 }
 
 export interface IndicatorValues {

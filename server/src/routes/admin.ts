@@ -6,7 +6,7 @@ import { getCronStatus } from "../services/news/index.js"
 import { fetchAllNews } from "../services/news/newsFetcher.js"
 import { testFetchSource } from "../services/news/newsFetcher.js"
 import { digestRecentNews } from "../services/news/newsDigester.js"
-import { streamAdminChat, executeAdminQuery } from "../services/ai/adminAssistant.js"
+import { streamAdminChat, executeAdminQuery, getAdminModels } from "../services/ai/adminAssistant.js"
 import { invalidateConfigCache } from "../services/indicators/configService.js"
 import { validateFormula } from "../services/indicators/formulaEvaluator.js"
 import {
@@ -101,6 +101,11 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   // ── Cron status ──
   app.get("/api/v1/admin/cron/status", async () => {
     return ok(getCronStatus())
+  })
+
+  // ── Admin AI models ──
+  app.get("/api/v1/admin/models", async () => {
+    return ok(getAdminModels())
   })
 
   // ── Manual trigger: news fetch ──
@@ -317,10 +322,11 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
   // ── Admin AI chat (SSE stream) with session persistence ──
   app.post("/api/v1/admin/chat/stream", async (req, reply) => {
-    const { message, sessionId: inputSessionId, history } = req.body as {
+    const { message, sessionId: inputSessionId, history, model } = req.body as {
       message: string
       sessionId?: string
       history?: { role: "user" | "assistant"; content: string }[]
+      model?: string
     }
 
     if (!message) return err(400, "message is required")
@@ -366,7 +372,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       }
 
       let fullResponse = ""
-      for await (const chunk of streamAdminChat(message, chatHistory)) {
+      for await (const chunk of streamAdminChat(message, chatHistory, model)) {
         reply.raw.write(`data: ${JSON.stringify({ content: chunk })}\n\n`)
         fullResponse += chunk
       }

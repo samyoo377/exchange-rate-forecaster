@@ -8,6 +8,7 @@ import { getPredictionHistory, getTaskHistory } from "../services/history/histor
 import { streamChat } from "../services/ai/chatService.js"
 import { digestRecentNews, getLatestDigest, fetchAllNews } from "../services/news/index.js"
 import { saveUploadedFile } from "../services/file/fileService.js"
+import { getIndicatorConfigs } from "../services/indicators/configService.js"
 import {
   createSession, listSessions, getSessionWithMessages,
   deleteSession, addMessage, generateSessionTitle, getSessionHistory,
@@ -206,6 +207,38 @@ export async function registerRoutes(app: FastifyInstance) {
       reply.status(500)
       return err(50002, msg)
     }
+  })
+
+  // indicator configs (public, for web display)
+  const BUILTIN_DATA_KEYS: Record<string, string[]> = {
+    RSI: ["rsi14"],
+    STOCH: ["stochK", "stochD"],
+    CCI: ["cci20"],
+    ADX: ["adx14", "plusDi14", "minusDi14"],
+    AO: ["ao"],
+    MOM: ["mom10"],
+  }
+
+  app.get("/api/v1/indicators/configs", async () => {
+    const configs = await getIndicatorConfigs()
+    const result = []
+    for (const [type, config] of configs) {
+      const isBuiltin = !!BUILTIN_DATA_KEYS[type]
+      const dataKeys = isBuiltin
+        ? BUILTIN_DATA_KEYS[type]
+        : [type.toLowerCase().replace(/-/g, "_")]
+      result.push({
+        indicatorType: type,
+        displayName: config.displayName,
+        description: config.description,
+        params: JSON.parse(config.params),
+        signalThresholds: JSON.parse(config.signalThresholds),
+        dataKeys,
+        isBuiltin,
+        chartType: type === "AO" ? "bar" : "line",
+      })
+    }
+    return ok(result)
   })
 
   // prediction query

@@ -237,3 +237,22 @@ export async function uploadFile(file: File): Promise<UploadedFileInfo> {
   if (res.data.code !== 0) throw new Error(res.data.message)
   return res.data.data as UploadedFileInfo
 }
+
+// ── Indicator Configs ──
+
+export interface IndicatorConfigInfo {
+  indicatorType: string
+  displayName: string
+  description: string | null
+  params: Record<string, any>
+  signalThresholds: Record<string, any>
+  dataKeys: string[]
+  isBuiltin: boolean
+  chartType: "line" | "bar"
+}
+
+export async function getIndicatorConfigs(): Promise<IndicatorConfigInfo[]> {
+  const res = await http.get<ApiResponse<IndicatorConfigInfo[]>>("/api/v1/indicators/configs")
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data ?? []
+}

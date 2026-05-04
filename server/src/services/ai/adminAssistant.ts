@@ -4,6 +4,37 @@ const ABL_API_BASE_URL = process.env.ABL_API_BASE_URL ?? "https://api.ablai.top"
 const ABL_API_TOKEN = process.env.ABL_API_TOKEN ?? ""
 const ADMIN_MODEL_ID = process.env.ADMIN_MODEL_ID ?? "claude-sonnet-4-6"
 
+const MODEL_META: Record<string, { name: string; desc: string; speed: string; capability: string }> = {
+  "claude-sonnet-4-6": { name: "Claude Sonnet 4.6", desc: "Anthropic 均衡模型，速度与质量兼顾", speed: "快", capability: "综合分析、代码、写作" },
+  "claude-opus-4-6": { name: "Claude Opus 4.6", desc: "Anthropic 旗舰模型，最强推理和创作能力", speed: "较慢", capability: "深度推理、复杂分析、高质量写作" },
+  "gpt-5.4-2026-03-05": { name: "GPT-5.4", desc: "OpenAI 最新一代旗舰模型，综合能力强", speed: "快", capability: "综合分析、多模态、代码、推理" },
+  "gemini-3.1-pro-preview-thinking-high": { name: "Gemini 3.1 Pro", desc: "Google 深度思考模型，高级推理模式", speed: "较慢", capability: "深度推理、长文分析、复杂问题拆解" },
+  "deepseek-chat": { name: "DeepSeek Chat", desc: "深度求索对话模型，中文优化", speed: "快", capability: "中文对话、代码、数据分析" },
+  "deepseek-reasoner": { name: "DeepSeek Reasoner", desc: "深度求索推理模型，深度思考", speed: "较慢", capability: "数学推理、逻辑推演、复杂问题" },
+}
+
+function parseModelList(): string[] {
+  const envList = process.env.ADMIN_MODEL_LIST
+  if (envList) {
+    return envList.split(",").map((s) => s.trim()).filter(Boolean)
+  }
+  return [ADMIN_MODEL_ID]
+}
+
+export function getAdminModels() {
+  const ids = parseModelList()
+  return ids.map((id) => {
+    const meta = MODEL_META[id]
+    return {
+      id,
+      name: meta?.name ?? id,
+      description: meta?.desc ?? "",
+      speed: meta?.speed ?? "",
+      capability: meta?.capability ?? "",
+    }
+  })
+}
+
 interface ChatMessage {
   role: "system" | "user" | "assistant"
   content: string
@@ -88,9 +119,11 @@ export async function buildAdminContext(): Promise<string> {
 
 export async function* streamAdminChat(
   userMessage: string,
-  conversationHistory: ChatMessage[] = []
+  conversationHistory: ChatMessage[] = [],
+  modelOverride?: string,
 ): AsyncGenerator<string> {
   const context = await buildAdminContext()
+  const modelId = modelOverride || ADMIN_MODEL_ID
 
   const messages: ChatMessage[] = [
     { role: "system", content: `${ADMIN_SYSTEM_PROMPT}\n\n${context}` },
@@ -98,7 +131,6 @@ export async function* streamAdminChat(
     { role: "user", content: userMessage },
   ]
 
-  console.log("show Admin chat messages:", ABL_API_BASE_URL, ABL_API_TOKEN)
   const response = await fetch(`${ABL_API_BASE_URL}/v1/chat/completions`, {
     method: "POST",
     headers: {
@@ -106,15 +138,13 @@ export async function* streamAdminChat(
       Authorization: `Bearer ${ABL_API_TOKEN}`,
     },
     body: JSON.stringify({
-      model: ADMIN_MODEL_ID,
+      model: modelId,
       messages,
       stream: true,
       temperature: 0.3,
       max_tokens: 4096,
     }),
   })
-
-  console.log("show Admin AI API response:", response)
 
   if (!response.ok) {
     const text = await response.text()

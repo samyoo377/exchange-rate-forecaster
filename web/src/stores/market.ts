@@ -1,7 +1,8 @@
 import { defineStore } from "pinia"
 import { ref, computed } from "vue"
 import type { DashboardData } from "../types/index"
-import { getDashboard, refreshData } from "../api/index"
+import { getDashboard, refreshData, getLatestNewsDigest, getIndicatorConfigs } from "../api/index"
+import type { NewsDigest, IndicatorConfigInfo } from "../api/index"
 
 export const useMarketStore = defineStore("market", () => {
   const dashboard = ref<DashboardData | null>(null)
@@ -9,6 +10,8 @@ export const useMarketStore = defineStore("market", () => {
   const error = ref<string | null>(null)
   const symbol = ref("USDCNH")
   const interval = ref("1d")
+  const newsDigest = ref<NewsDigest | null>(null)
+  const indicatorConfigs = ref<IndicatorConfigInfo[]>([])
 
   const series = computed(() => dashboard.value?.series ?? [])
   const indicators = computed(() => dashboard.value?.indicators ?? {})
@@ -19,7 +22,14 @@ export const useMarketStore = defineStore("market", () => {
     loading.value = true
     error.value = null
     try {
-      dashboard.value = await getDashboard(symbol.value, interval.value)
+      const [dash, digest, configs] = await Promise.all([
+        getDashboard(symbol.value, interval.value),
+        getLatestNewsDigest(symbol.value).catch(() => null),
+        getIndicatorConfigs().catch(() => []),
+      ])
+      dashboard.value = dash
+      newsDigest.value = digest
+      indicatorConfigs.value = configs
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
@@ -45,5 +55,10 @@ export const useMarketStore = defineStore("market", () => {
     }
   }
 
-  return { dashboard, loading, error, symbol, interval, series, indicators, lastUpdatedAt, latestPrediction, fetchDashboard, setInterval, refresh }
+  return {
+    dashboard, loading, error, symbol, interval,
+    series, indicators, lastUpdatedAt, latestPrediction,
+    newsDigest, indicatorConfigs,
+    fetchDashboard, setInterval, refresh,
+  }
 })

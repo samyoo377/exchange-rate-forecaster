@@ -2,7 +2,94 @@
   <div class="overview">
     <h2 class="page-title">系统概览</h2>
 
+    <!-- Market Analysis Section -->
+    <h3 class="section-title">市场分析速览</h3>
+    <el-row :gutter="12" class="section">
+      <!-- Technical Signals -->
+      <el-col :xs="24" :sm="8">
+        <el-card shadow="hover" class="analysis-card">
+          <div class="analysis-header">
+            <span class="analysis-icon tech-icon">📊</span>
+            <span class="analysis-label">技术面信号</span>
+          </div>
+          <template v-if="dashData">
+            <div class="signal-summary">
+              <el-tag :type="techSentiment.type" size="default" effect="dark">{{ techSentiment.label }}</el-tag>
+            </div>
+            <div class="signal-detail-list">
+              <div v-for="sig in techSignals" :key="sig.name" class="signal-item">
+                <span class="sig-name">{{ sig.name }}</span>
+                <span class="sig-value">{{ sig.value }}</span>
+                <el-tag :type="sig.type" size="small" effect="plain">{{ sig.signal }}</el-tag>
+              </div>
+            </div>
+          </template>
+          <div v-else class="no-data-hint">暂无行情数据</div>
+        </el-card>
+      </el-col>
+
+      <!-- News Sentiment -->
+      <el-col :xs="24" :sm="8">
+        <el-card shadow="hover" class="analysis-card">
+          <div class="analysis-header">
+            <span class="analysis-icon news-icon">📰</span>
+            <span class="analysis-label">消息面研判</span>
+          </div>
+          <template v-if="latestDigest">
+            <div class="signal-summary">
+              <el-tag :type="sentimentType(latestDigest.sentiment)" size="default" effect="dark">
+                {{ sentimentLabel(latestDigest.sentiment) }}
+              </el-tag>
+            </div>
+            <div class="news-brief">{{ latestDigest.headline }}</div>
+            <div v-if="latestDigest.keyFactors?.length" class="factor-mini-list">
+              <div v-for="(f, i) in latestDigest.keyFactors.slice(0, 3)" :key="i" class="factor-mini">
+                <span :class="['factor-arrow', f.direction]">{{ f.direction === 'bullish' ? '↑' : f.direction === 'bearish' ? '↓' : '→' }}</span>
+                <span>{{ f.factor }}</span>
+              </div>
+            </div>
+          </template>
+          <div v-else class="no-data-hint">暂无消息摘要</div>
+        </el-card>
+      </el-col>
+
+      <!-- Prediction Direction -->
+      <el-col :xs="24" :sm="8">
+        <el-card shadow="hover" class="analysis-card">
+          <div class="analysis-header">
+            <span class="analysis-icon pred-icon">🎯</span>
+            <span class="analysis-label">综合预测方向</span>
+          </div>
+          <template v-if="dashData?.latestPrediction">
+            <div class="pred-direction">
+              <span class="direction-big" :class="dashData.latestPrediction.direction">
+                {{ directionEmoji(dashData.latestPrediction.direction) }}
+                {{ directionText(dashData.latestPrediction.direction) }}
+              </span>
+            </div>
+            <div class="pred-confidence">
+              <span class="conf-label">置信度</span>
+              <el-progress
+                :percentage="Math.round(dashData.latestPrediction.confidence * 100)"
+                :stroke-width="10"
+                :color="confColor(dashData.latestPrediction.confidence)"
+              />
+            </div>
+            <div class="pred-horizon">
+              <el-tag size="small" type="info">{{ dashData.latestPrediction.horizon }}</el-tag>
+            </div>
+          </template>
+          <div v-else class="no-data-hint">暂无预测数据</div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <div class="disclaimer-bar">
+      ⚠️ 以上分析仅供参考，不构成投资建议。市场有风险，决策需谨慎。
+    </div>
+
     <!-- Cron Status Cards -->
+    <h3 class="section-title">定时任务状态</h3>
     <el-row :gutter="16" class="section">
       <el-col :span="12" v-for="job in cronJobs" :key="job.name">
         <el-card shadow="hover" class="cron-card">
@@ -189,12 +276,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue"
+import { ref, computed, onMounted, onUnmounted } from "vue"
 import { useRouter } from "vue-router"
 import {
   getCronStatus, getTableList,
-  getLatestDigest,
+  getLatestDigest, getDashboardData,
   type CronJobStatus, type TableInfo, type NewsDigestDetail,
+  type DashboardData, type DashboardIndicators,
 } from "../api/index"
 
 const notShowTables = ["ChatSession", "ChatMessage"]
@@ -203,6 +291,7 @@ const router = useRouter()
 const cronJobs = ref<CronJobStatus[]>([])
 const tables = ref<TableInfo[]>([])
 const latestDigest = ref<NewsDigestDetail | null>(null)
+const dashData = ref<DashboardData | null>(null)
 const serverUptime = ref(0)
 const showAllNews = ref(false)
 const newsDialogVisible = ref(false)
@@ -214,6 +303,87 @@ let timer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 const now = ref(Date.now())
 
+// ── Technical signals ──
+
+type TagType = "success" | "danger" | "warning" | "info"
+
+function sigRsi(v?: number): { signal: string; type: TagType } {
+  if (v == null) return { signal: "—", type: "info" }
+  if (v < 30) return { signal: "超卖", type: "success" }
+  if (v > 70) return { signal: "超买", type: "danger" }
+  return { signal: "中性", type: "info" }
+}
+
+function sigStoch(v?: number): { signal: string; type: TagType } {
+  if (v == null) return { signal: "—", type: "info" }
+  if (v < 20) return { signal: "超卖", type: "success" }
+  if (v > 80) return { signal: "超买", type: "danger" }
+  return { signal: "中性", type: "info" }
+}
+
+function sigCci(v?: number): { signal: string; type: TagType } {
+  if (v == null) return { signal: "—", type: "info" }
+  if (v < -100) return { signal: "超卖", type: "success" }
+  if (v > 100) return { signal: "超买", type: "danger" }
+  return { signal: "中性", type: "info" }
+}
+
+function sigAo(v?: number): { signal: string; type: TagType } {
+  if (v == null) return { signal: "—", type: "info" }
+  if (v > 0) return { signal: "偏多", type: "success" }
+  if (v < 0) return { signal: "偏空", type: "danger" }
+  return { signal: "中性", type: "info" }
+}
+
+function sigMom(v?: number): { signal: string; type: TagType } {
+  if (v == null) return { signal: "—", type: "info" }
+  if (v > 0) return { signal: "偏多", type: "success" }
+  if (v < 0) return { signal: "偏空", type: "danger" }
+  return { signal: "中性", type: "info" }
+}
+
+const techSignals = computed(() => {
+  if (!dashData.value) return []
+  const ind = dashData.value.indicators
+  const fmt = (v?: number, d = 2) => v == null ? "—" : v.toFixed(d)
+  return [
+    { name: "RSI(14)", value: fmt(ind.rsi14), ...sigRsi(ind.rsi14) },
+    { name: "Stoch %K", value: fmt(ind.stochK), ...sigStoch(ind.stochK) },
+    { name: "CCI(20)", value: fmt(ind.cci20), ...sigCci(ind.cci20) },
+    { name: "AO", value: fmt(ind.ao, 5), ...sigAo(ind.ao) },
+    { name: "MOM(10)", value: fmt(ind.mom10, 4), ...sigMom(ind.mom10) },
+  ]
+})
+
+const techSentiment = computed(() => {
+  const sigs = techSignals.value
+  const bull = sigs.filter((s) => s.type === "success").length
+  const bear = sigs.filter((s) => s.type === "danger").length
+  if (bull > bear + 1) return { label: "偏多 ↑", type: "success" as TagType }
+  if (bear > bull + 1) return { label: "偏空 ↓", type: "danger" as TagType }
+  return { label: "中性 →", type: "info" as TagType }
+})
+
+function directionEmoji(d: string) {
+  if (d === "bullish") return "📈"
+  if (d === "bearish") return "📉"
+  return "➡"
+}
+
+function directionText(d: string) {
+  if (d === "bullish") return "看多"
+  if (d === "bearish") return "看空"
+  return "震荡"
+}
+
+function confColor(c: number) {
+  if (c >= 0.7) return "#67c23a"
+  if (c >= 0.4) return "#e6a23c"
+  return "#909399"
+}
+
+// ── Data fetching ──
+
 async function refresh() {
   try {
     const [crons, tbls] = await Promise.all([getCronStatus(), getTableList()])
@@ -223,6 +393,11 @@ async function refresh() {
     try {
       const digest = await getLatestDigest()
       if (digest) latestDigest.value = digest
+    } catch { /* ok */ }
+
+    try {
+      const dash = await getDashboardData()
+      if (dash) dashData.value = dash
     } catch { /* ok */ }
 
     try {
@@ -321,6 +496,136 @@ onUnmounted(() => {
 .section-title { font-size: 15px; font-weight: 600; margin: 20px 0 10px; color: #303133; }
 .section { margin-bottom: 16px; }
 
+/* Analysis cards */
+.analysis-card {
+  border-radius: 10px;
+  height: 100%;
+}
+
+.analysis-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.analysis-icon {
+  font-size: 18px;
+}
+
+.analysis-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.signal-summary {
+  margin-bottom: 10px;
+}
+
+.signal-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.signal-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 6px;
+  background: #fafbfc;
+  border-radius: 4px;
+}
+
+.sig-name {
+  color: #606266;
+  min-width: 60px;
+}
+
+.sig-value {
+  font-weight: 600;
+  color: #303133;
+  min-width: 50px;
+  text-align: right;
+}
+
+.news-brief {
+  font-size: 13px;
+  color: #303133;
+  font-weight: 500;
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.factor-mini-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.factor-mini {
+  font-size: 12px;
+  color: #606266;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.factor-arrow {
+  font-weight: 700;
+}
+.factor-arrow.bullish { color: #e6a23c; }
+.factor-arrow.bearish { color: #67c23a; }
+.factor-arrow.neutral { color: #909399; }
+
+.pred-direction {
+  margin-bottom: 10px;
+}
+
+.direction-big {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.direction-big.bullish { color: #67c23a; }
+.direction-big.bearish { color: #f56c6c; }
+.direction-big.neutral { color: #909399; }
+
+.pred-confidence {
+  margin-bottom: 8px;
+}
+
+.conf-label {
+  font-size: 11px;
+  color: #909399;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.pred-horizon {
+  margin-top: 4px;
+}
+
+.no-data-hint {
+  font-size: 12px;
+  color: #c0c4cc;
+  padding: 16px 0;
+  text-align: center;
+}
+
+.disclaimer-bar {
+  font-size: 12px;
+  color: #e6a23c;
+  background: #fef9f0;
+  border: 1px solid #faecd8;
+  border-radius: 6px;
+  padding: 8px 14px;
+  margin-bottom: 16px;
+}
+
+/* Cron cards */
 .cron-card .card-header {
   display: flex;
   align-items: center;

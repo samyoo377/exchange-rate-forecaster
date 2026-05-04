@@ -138,13 +138,41 @@
 
     <!-- Input -->
     <div class="panel-input">
-      <el-input ref="inputRef" v-model="input" placeholder="输入问题... (↑↓翻历史, Esc关闭)" @keydown="onInputKeydown"
-        :disabled="streaming" size="small">
-        <template #append>
-          <el-button v-if="streaming" type="danger" @click="stopStreaming" size="small">停止</el-button>
-          <el-button v-else type="primary" @click="sendMessage()" :disabled="!input.trim()" size="small">发送</el-button>
-        </template>
-      </el-input>
+      <div class="input-row">
+        <el-dropdown trigger="click" size="small" popper-class="ai-dropdown-menu" @command="(id: string) => selectedModel = id">
+          <button class="model-selector-btn" title="切换模型">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+              <line x1="8" y1="21" x2="16" y2="21" />
+              <line x1="12" y1="17" x2="12" y2="21" />
+            </svg>
+            <span class="model-selector-label">{{ currentModelMeta?.name || '模型' }}</span>
+            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-for="m in models" :key="m.id" :command="m.id" :class="{ 'active-model': selectedModel === m.id }">
+                <div class="model-option">
+                  <div class="model-option-left">
+                    <span class="model-option-name">{{ m.name || m.id }}</span>
+                    <span class="model-option-desc">{{ m.capability }}</span>
+                  </div>
+                  <el-tag v-if="m.speed" size="small" :type="m.speed === '快' ? 'success' : 'warning'">{{ m.speed }}</el-tag>
+                </div>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-input ref="inputRef" v-model="input" placeholder="输入问题... (↑↓翻历史, Esc关闭)" @keydown="onInputKeydown"
+          :disabled="streaming" size="small">
+          <template #append>
+            <el-button v-if="streaming" type="danger" @click="stopStreaming" size="small">停止</el-button>
+            <el-button v-else type="primary" @click="sendMessage()" :disabled="!input.trim()" size="small">发送</el-button>
+          </template>
+        </el-input>
+      </div>
     </div>
 
     <!-- Resize handle -->
@@ -158,6 +186,7 @@ import { useRoute } from "vue-router"
 import {
   streamAdminChat, getAdminChatSessions,
   getAdminChatSession, deleteAdminChatSession,
+  getAdminModels, type AdminModel,
 } from "../api/index"
 
 interface ChatMsg {
@@ -184,7 +213,19 @@ const messagesRef = ref<HTMLElement | null>(null)
 const inputRef = ref<any>(null)
 const sessionId = ref<string | null>(localStorage.getItem(STORAGE_KEY_SESSION))
 const sessions = ref<SessionItem[]>([])
+const models = ref<AdminModel[]>([])
+const selectedModel = ref("")
 let activeController: AbortController | null = null
+
+// Restore model from localStorage, sanitize corrupted values
+{
+  const stored = localStorage.getItem("admin_chat_model") || ""
+  if (stored && !stored.startsWith("[") && !stored.startsWith("{")) {
+    selectedModel.value = stored
+  } else {
+    localStorage.removeItem("admin_chat_model")
+  }
+}
 
 const sentHistory = ref<string[]>([])
 let historyIndex = -1
@@ -236,6 +277,8 @@ const contextQuestions = computed(() => PAGE_QUESTIONS[route.path] ?? [
   "最近的新闻消化摘要是什么？",
   "有哪些失败的任务日志？",
 ])
+
+const currentModelMeta = computed(() => models.value.find((m) => m.id === selectedModel.value))
 
 // ── Layout ──
 const fabStyle = computed(() => {
@@ -298,6 +341,7 @@ function toggleOpen() {
       inputRef.value?.focus?.()
     })
     loadSessions()
+    loadModels()
   }
 }
 
@@ -373,6 +417,23 @@ async function loadSessions() {
     sessions.value = (await getAdminChatSessions()) as SessionItem[]
   } catch { /* ok */ }
 }
+
+async function loadModels() {
+  if (models.value.length > 0) return
+  try {
+    models.value = await getAdminModels()
+    if (models.value.length > 0) {
+      const valid = models.value.some((m) => m.id === selectedModel.value)
+      if (!valid) {
+        selectedModel.value = models.value[0].id
+      }
+    }
+  } catch { /* ok */ }
+}
+
+watch(selectedModel, (val) => {
+  if (val) localStorage.setItem("admin_chat_model", val)
+})
 
 async function onSessionCommand(command: string) {
   if (command === "__new") {
@@ -518,7 +579,9 @@ async function sendMessage(text?: string) {
       scrollToBottom()
     },
     () => {
-      messages.value.push({ role: "assistant", content: streamBuffer.value })
+      if (streamBuffer.value) {
+        messages.value.push({ role: "assistant", content: streamBuffer.value })
+      }
       streamBuffer.value = ""
       streaming.value = false
       activeController = null
@@ -538,6 +601,7 @@ async function sendMessage(text?: string) {
     (id) => {
       setSessionIdValue(id)
     },
+    selectedModel.value || undefined,
   )
 }
 
@@ -869,6 +933,76 @@ onUnmounted(() => {
 }
 
 .active-session {
+  background: #ecf5ff;
+}
+
+/* Model selector in input */
+.input-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.input-row .el-input {
+  flex: 1;
+}
+
+.model-selector-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background: #f5f7fa;
+  font-size: 11px;
+  color: #606266;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+  height: 100%;
+}
+
+.model-selector-btn:hover {
+  border-color: #409eff;
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.model-selector-label {
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 200px;
+}
+
+.model-option-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-option-name {
+  font-size: 12px;
+  display: block;
+}
+
+.model-option-desc {
+  font-size: 10px;
+  color: #909399;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active-model {
   background: #ecf5ff;
 }
 </style>

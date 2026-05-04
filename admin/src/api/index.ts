@@ -80,6 +80,18 @@ export async function queryTable(
 }
 
 // ── Admin AI Chat (SSE) ──
+export interface AdminModel {
+  id: string
+  name: string
+  description: string
+  speed: string
+  capability: string
+}
+
+export async function getAdminModels(): Promise<AdminModel[]> {
+  return unwrap(await http.get("/api/v1/admin/models"))
+}
+
 export function streamAdminChat(
   message: string,
   history: { role: string; content: string }[],
@@ -88,13 +100,15 @@ export function streamAdminChat(
   onError: (err: string) => void,
   sessionId?: string,
   onSessionId?: (id: string) => void,
+  model?: string,
 ): AbortController {
   const controller = new AbortController()
+  let hadError = false
 
   fetch("/api/v1/admin/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, sessionId }),
+    body: JSON.stringify({ message, history, sessionId, model }),
     signal: controller.signal,
   })
     .then(async (res) => {
@@ -120,20 +134,24 @@ export function streamAdminChat(
           if (!trimmed.startsWith("data: ")) continue
           const data = trimmed.slice(6)
           if (data === "[DONE]") {
-            onDone()
+            if (!hadError) onDone()
             return
           }
           try {
             const parsed = JSON.parse(data)
             if (parsed.sessionId) onSessionId?.(parsed.sessionId)
+            if (parsed.error) {
+              hadError = true
+              onError(parsed.error)
+              return
+            }
             if (parsed.content) onChunk(parsed.content)
-            if (parsed.error) onError(parsed.error)
           } catch {
             // skip
           }
         }
       }
-      onDone()
+      if (!hadError) onDone()
     })
     .catch((e) => {
       if (e.name !== "AbortError") onError(e.message)
@@ -243,4 +261,35 @@ export interface NewsDigestDetail {
 
 export async function getLatestDigest(symbol = "USDCNH"): Promise<NewsDigestDetail | null> {
   return unwrap(await http.get(`/api/v1/news/digest/latest?symbol=${symbol}`))
+}
+
+// ── Dashboard (for overview market analysis) ──
+
+export interface DashboardIndicators {
+  rsi14?: number
+  stochK?: number
+  stochD?: number
+  cci20?: number
+  adx14?: number
+  plusDi14?: number
+  minusDi14?: number
+  ao?: number
+  mom10?: number
+}
+
+export interface DashboardPrediction {
+  direction: "bullish" | "bearish" | "neutral"
+  confidence: number
+  horizon: string
+}
+
+export interface DashboardData {
+  symbol: string
+  lastUpdatedAt: string
+  indicators: DashboardIndicators
+  latestPrediction: DashboardPrediction | null
+}
+
+export async function getDashboardData(symbol = "USDCNH"): Promise<DashboardData | null> {
+  return unwrap(await http.get(`/api/v1/dashboard/latest?symbol=${symbol}`))
 }
