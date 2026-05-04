@@ -1,4 +1,6 @@
 import type { OhlcBar, IndicatorValues } from "../../types/index.js"
+import { getIndicatorConfigs } from "./configService.js"
+import { evaluateFormula } from "./formulaEvaluator.js"
 
 function sma(arr: number[], period: number, end: number): number | null {
   if (end < period - 1) return null
@@ -7,10 +9,12 @@ function sma(arr: number[], period: number, end: number): number | null {
   return sum / period
 }
 
-export function calcRsi14(bars: OhlcBar[]): (number | null)[] {
+// ── Parameterized indicator functions ──
+
+export function calcRsi(bars: OhlcBar[], period = 14): (number | null)[] {
   const n = bars.length
   const result: (number | null)[] = Array(n).fill(null)
-  if (n < 15) return result
+  if (n < period + 1) return result
 
   const gains: number[] = []
   const losses: number[] = []
@@ -21,63 +25,71 @@ export function calcRsi14(bars: OhlcBar[]): (number | null)[] {
     losses.push(Math.max(-diff, 0))
   }
 
-  let avgGain = gains.slice(0, 14).reduce((a, b) => a + b, 0) / 14
-  let avgLoss = losses.slice(0, 14).reduce((a, b) => a + b, 0) / 14
+  let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period
+  let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period
 
-  for (let i = 14; i < n; i++) {
+  for (let i = period; i < n; i++) {
     const rs = avgLoss === 0 ? 100 : avgGain / avgLoss
     result[i] = 100 - 100 / (1 + rs)
-    avgGain = (avgGain * 13 + gains[i]) / 14
-    avgLoss = (avgLoss * 13 + losses[i]) / 14
+    avgGain = (avgGain * (period - 1) + gains[i]) / period
+    avgLoss = (avgLoss * (period - 1) + losses[i]) / period
   }
 
   return result
 }
 
-export function calcStoch14(bars: OhlcBar[]): { k: (number | null)[]; d: (number | null)[] } {
+export function calcStoch(bars: OhlcBar[], period = 14, smoothK = 3): { k: (number | null)[]; d: (number | null)[] } {
   const n = bars.length
   const rawK: (number | null)[] = Array(n).fill(null)
   const k: (number | null)[] = Array(n).fill(null)
   const d: (number | null)[] = Array(n).fill(null)
 
-  for (let i = 13; i < n; i++) {
-    const slice = bars.slice(i - 13, i + 1)
-    const h14 = Math.max(...slice.map((b) => b.high))
-    const l14 = Math.min(...slice.map((b) => b.low))
-    rawK[i] = h14 === l14 ? 50 : (100 * (bars[i].close - l14)) / (h14 - l14)
+  for (let i = period - 1; i < n; i++) {
+    const slice = bars.slice(i - period + 1, i + 1)
+    const hMax = Math.max(...slice.map((b) => b.high))
+    const lMin = Math.min(...slice.map((b) => b.low))
+    rawK[i] = hMax === lMin ? 50 : (100 * (bars[i].close - lMin)) / (hMax - lMin)
   }
 
-  for (let i = 15; i < n; i++) {
-    const vals = [rawK[i], rawK[i - 1], rawK[i - 2]].filter((v): v is number => v !== null)
-    if (vals.length === 3) k[i] = vals.reduce((a, b) => a + b, 0) / 3
+  const kStart = period - 1 + smoothK - 1
+  for (let i = kStart; i < n; i++) {
+    const vals = []
+    for (let j = 0; j < smoothK; j++) {
+      if (rawK[i - j] !== null) vals.push(rawK[i - j]!)
+    }
+    if (vals.length === smoothK) k[i] = vals.reduce((a, b) => a + b, 0) / smoothK
   }
 
-  for (let i = 17; i < n; i++) {
-    const vals = [k[i], k[i - 1], k[i - 2]].filter((v): v is number => v !== null)
-    if (vals.length === 3) d[i] = vals.reduce((a, b) => a + b, 0) / 3
+  const dStart = kStart + smoothK - 1
+  for (let i = dStart; i < n; i++) {
+    const vals = []
+    for (let j = 0; j < smoothK; j++) {
+      if (k[i - j] !== null) vals.push(k[i - j]!)
+    }
+    if (vals.length === smoothK) d[i] = vals.reduce((a, b) => a + b, 0) / smoothK
   }
 
   return { k, d }
 }
 
-export function calcCci20(bars: OhlcBar[]): (number | null)[] {
+export function calcCci(bars: OhlcBar[], period = 20): (number | null)[] {
   const n = bars.length
   const result: (number | null)[] = Array(n).fill(null)
-  if (n < 20) return result
+  if (n < period) return result
 
   const tp = bars.map((b) => (b.high + b.low + b.close) / 3)
 
-  for (let i = 19; i < n; i++) {
-    const slice = tp.slice(i - 19, i + 1)
-    const ma = slice.reduce((a, b) => a + b, 0) / 20
-    const md = slice.reduce((acc, v) => acc + Math.abs(v - ma), 0) / 20
+  for (let i = period - 1; i < n; i++) {
+    const slice = tp.slice(i - period + 1, i + 1)
+    const ma = slice.reduce((a, b) => a + b, 0) / period
+    const md = slice.reduce((acc, v) => acc + Math.abs(v - ma), 0) / period
     result[i] = md === 0 ? 0 : (tp[i] - ma) / (0.015 * md)
   }
 
   return result
 }
 
-export function calcAdx14(bars: OhlcBar[]): {
+export function calcAdx(bars: OhlcBar[], period = 14): {
   adx: (number | null)[]
   plusDi: (number | null)[]
   minusDi: (number | null)[]
@@ -86,7 +98,7 @@ export function calcAdx14(bars: OhlcBar[]): {
   const adx: (number | null)[] = Array(n).fill(null)
   const plusDi: (number | null)[] = Array(n).fill(null)
   const minusDi: (number | null)[] = Array(n).fill(null)
-  if (n < 28) return { adx, plusDi, minusDi }
+  if (n < period * 2) return { adx, plusDi, minusDi }
 
   const trArr: number[] = [0]
   const dmPlus: number[] = [0]
@@ -102,88 +114,90 @@ export function calcAdx14(bars: OhlcBar[]): {
     dmMinus.push(down > up && down > 0 ? down : 0)
   }
 
-  let atr = trArr.slice(1, 15).reduce((a, b) => a + b, 0)
-  let sDmPlus = dmPlus.slice(1, 15).reduce((a, b) => a + b, 0)
-  let sDmMinus = dmMinus.slice(1, 15).reduce((a, b) => a + b, 0)
+  let atr = trArr.slice(1, period + 1).reduce((a, b) => a + b, 0)
+  let sDmPlus = dmPlus.slice(1, period + 1).reduce((a, b) => a + b, 0)
+  let sDmMinus = dmMinus.slice(1, period + 1).reduce((a, b) => a + b, 0)
 
-  const diPlus: number[] = Array(n).fill(0)
-  const diMinus: number[] = Array(n).fill(0)
+  const diPlusArr: number[] = Array(n).fill(0)
+  const diMinusArr: number[] = Array(n).fill(0)
 
-  for (let i = 14; i < n; i++) {
-    atr = atr - atr / 14 + trArr[i]
-    sDmPlus = sDmPlus - sDmPlus / 14 + dmPlus[i]
-    sDmMinus = sDmMinus - sDmMinus / 14 + dmMinus[i]
+  for (let i = period; i < n; i++) {
+    atr = atr - atr / period + trArr[i]
+    sDmPlus = sDmPlus - sDmPlus / period + dmPlus[i]
+    sDmMinus = sDmMinus - sDmMinus / period + dmMinus[i]
 
-    diPlus[i] = atr === 0 ? 0 : (100 * sDmPlus) / atr
-    diMinus[i] = atr === 0 ? 0 : (100 * sDmMinus) / atr
-    plusDi[i] = diPlus[i]
-    minusDi[i] = diMinus[i]
+    diPlusArr[i] = atr === 0 ? 0 : (100 * sDmPlus) / atr
+    diMinusArr[i] = atr === 0 ? 0 : (100 * sDmMinus) / atr
+    plusDi[i] = diPlusArr[i]
+    minusDi[i] = diMinusArr[i]
   }
 
   const dx: number[] = Array(n).fill(0)
-  for (let i = 14; i < n; i++) {
-    const sum = diPlus[i] + diMinus[i]
-    dx[i] = sum === 0 ? 0 : (100 * Math.abs(diPlus[i] - diMinus[i])) / sum
+  for (let i = period; i < n; i++) {
+    const sum = diPlusArr[i] + diMinusArr[i]
+    dx[i] = sum === 0 ? 0 : (100 * Math.abs(diPlusArr[i] - diMinusArr[i])) / sum
   }
 
-  let adxVal = dx.slice(14, 28).reduce((a, b) => a + b, 0) / 14
-  adx[27] = adxVal
+  const adxStart = period * 2
+  let adxVal = dx.slice(period, adxStart).reduce((a, b) => a + b, 0) / period
+  if (adxStart - 1 < n) adx[adxStart - 1] = adxVal
 
-  for (let i = 28; i < n; i++) {
-    adxVal = (adxVal * 13 + dx[i]) / 14
+  for (let i = adxStart; i < n; i++) {
+    adxVal = (adxVal * (period - 1) + dx[i]) / period
     adx[i] = adxVal
   }
 
   return { adx, plusDi, minusDi }
 }
 
-export function calcAo(bars: OhlcBar[]): (number | null)[] {
+export function calcAo(bars: OhlcBar[], shortPeriod = 5, longPeriod = 34): (number | null)[] {
   const n = bars.length
   const result: (number | null)[] = Array(n).fill(null)
   const mp = bars.map((b) => (b.high + b.low) / 2)
 
-  for (let i = 33; i < n; i++) {
-    const sma5 = sma(mp, 5, i)
-    const sma34 = sma(mp, 34, i)
-    if (sma5 !== null && sma34 !== null) result[i] = sma5 - sma34
+  for (let i = longPeriod - 1; i < n; i++) {
+    const smaShort = sma(mp, shortPeriod, i)
+    const smaLong = sma(mp, longPeriod, i)
+    if (smaShort !== null && smaLong !== null) result[i] = smaShort - smaLong
   }
 
   return result
 }
 
-export function calcMom10(bars: OhlcBar[]): (number | null)[] {
-  return bars.map((b, i) => (i < 10 ? null : b.close - bars[i - 10].close))
+export function calcMom(bars: OhlcBar[], period = 10): (number | null)[] {
+  return bars.map((b, i) => (i < period ? null : b.close - bars[i - period].close))
 }
 
-export function computeAllIndicators(bars: OhlcBar[]): IndicatorValues {
-  const rsiArr = calcRsi14(bars)
-  const stoch = calcStoch14(bars)
-  const cciArr = calcCci20(bars)
-  const adxCalc = calcAdx14(bars)
-  const aoArr = calcAo(bars)
-  const momArr = calcMom10(bars)
+// ── Legacy aliases (hardcoded defaults) ──
 
-  const last = bars.length - 1
-  return {
-    rsi14: rsiArr[last] ?? undefined,
-    stochK: stoch.k[last] ?? undefined,
-    stochD: stoch.d[last] ?? undefined,
-    cci20: cciArr[last] ?? undefined,
-    adx14: adxCalc.adx[last] ?? undefined,
-    plusDi14: adxCalc.plusDi[last] ?? undefined,
-    minusDi14: adxCalc.minusDi[last] ?? undefined,
-    ao: aoArr[last] ?? undefined,
-    mom10: momArr[last] ?? undefined,
-  }
+export const calcRsi14 = (bars: OhlcBar[]) => calcRsi(bars, 14)
+export const calcStoch14 = (bars: OhlcBar[]) => calcStoch(bars, 14, 3)
+export const calcCci20 = (bars: OhlcBar[]) => calcCci(bars, 20)
+export const calcAdx14 = (bars: OhlcBar[]) => calcAdx(bars, 14)
+export const calcMom10 = (bars: OhlcBar[]) => calcMom(bars, 10)
+
+// ── Synchronous computation with default params ──
+
+export function computeAllIndicators(bars: OhlcBar[]): IndicatorValues {
+  return computeIndicatorSeries(bars)[bars.length - 1] ?? {}
 }
 
 export function computeIndicatorSeries(bars: OhlcBar[]): IndicatorValues[] {
-  const rsiArr = calcRsi14(bars)
-  const stoch = calcStoch14(bars)
-  const cciArr = calcCci20(bars)
-  const adxCalc = calcAdx14(bars)
-  const aoArr = calcAo(bars)
-  const momArr = calcMom10(bars)
+  return computeSeriesWithParams(bars)
+}
+
+function computeSeriesWithParams(
+  bars: OhlcBar[],
+  rsiPeriod = 14, stochPeriod = 14, stochSmooth = 3,
+  cciPeriod = 20, adxPeriod = 14,
+  aoShort = 5, aoLong = 34, momPeriod = 10,
+): IndicatorValues[] {
+  const rsiArr = calcRsi(bars, rsiPeriod)
+  const stoch = calcStoch(bars, stochPeriod, stochSmooth)
+  const cciArr = calcCci(bars, cciPeriod)
+  const adxCalc = calcAdx(bars, adxPeriod)
+  const aoArr = calcAo(bars, aoShort, aoLong)
+  const momArr = calcMom(bars, momPeriod)
 
   return bars.map((_, i) => ({
     rsi14: rsiArr[i] ?? undefined,
@@ -196,4 +210,45 @@ export function computeIndicatorSeries(bars: OhlcBar[]): IndicatorValues[] {
     ao: aoArr[i] ?? undefined,
     mom10: momArr[i] ?? undefined,
   }))
+}
+
+// ── Config-aware async computation ──
+
+const BUILTIN_TYPES = new Set(["RSI", "STOCH", "CCI", "ADX", "AO", "MOM"])
+
+export async function computeIndicatorSeriesFromConfig(bars: OhlcBar[]): Promise<IndicatorValues[]> {
+  const configs = await getIndicatorConfigs()
+
+  const rsiP = configs.get("RSI") ? JSON.parse(configs.get("RSI")!.params) : { period: 14 }
+  const stochP = configs.get("STOCH") ? JSON.parse(configs.get("STOCH")!.params) : { period: 14, smoothK: 3 }
+  const cciP = configs.get("CCI") ? JSON.parse(configs.get("CCI")!.params) : { period: 20 }
+  const adxP = configs.get("ADX") ? JSON.parse(configs.get("ADX")!.params) : { period: 14 }
+  const aoP = configs.get("AO") ? JSON.parse(configs.get("AO")!.params) : { shortPeriod: 5, longPeriod: 34 }
+  const momP = configs.get("MOM") ? JSON.parse(configs.get("MOM")!.params) : { period: 10 }
+
+  const baseSeries = computeSeriesWithParams(
+    bars,
+    rsiP.period, stochP.period, stochP.smoothK,
+    cciP.period, adxP.period,
+    aoP.shortPeriod, aoP.longPeriod, momP.period,
+  )
+
+  for (const [type, config] of configs) {
+    if (BUILTIN_TYPES.has(type)) continue
+    if (!config.enabled) continue
+    if (!config.formulaExpression) continue
+
+    try {
+      const params = JSON.parse(config.params)
+      const values = evaluateFormula(config.formulaExpression, bars, params)
+      const key = type.toLowerCase().replace(/-/g, "_")
+      for (let i = 0; i < bars.length; i++) {
+        ;(baseSeries[i] as any)[key] = values[i] ?? undefined
+      }
+    } catch {
+      // skip broken custom formulas
+    }
+  }
+
+  return baseSeries
 }

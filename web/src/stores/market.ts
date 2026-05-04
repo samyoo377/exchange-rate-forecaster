@@ -8,6 +8,7 @@ export const useMarketStore = defineStore("market", () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const symbol = ref("USDCNH")
+  const interval = ref("1d")
 
   const series = computed(() => dashboard.value?.series ?? [])
   const indicators = computed(() => dashboard.value?.indicators ?? {})
@@ -18,12 +19,17 @@ export const useMarketStore = defineStore("market", () => {
     loading.value = true
     error.value = null
     try {
-      dashboard.value = await getDashboard(symbol.value)
+      dashboard.value = await getDashboard(symbol.value, interval.value)
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
       loading.value = false
     }
+  }
+
+  async function setInterval(iv: string) {
+    interval.value = iv
+    await fetchDashboard()
   }
 
   async function refresh(source = "excel") {
@@ -39,5 +45,5 @@ export const useMarketStore = defineStore("market", () => {
     }
   }
 
-  return { dashboard, loading, error, symbol, series, indicators, lastUpdatedAt, latestPrediction, fetchDashboard, refresh }
+  return { dashboard, loading, error, symbol, interval, series, indicators, lastUpdatedAt, latestPrediction, fetchDashboard, setInterval, refresh }
 })

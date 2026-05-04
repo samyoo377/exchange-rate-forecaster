@@ -13,7 +13,7 @@
       >
         <el-menu-item index="/dashboard">工作台</el-menu-item>
         <el-menu-item index="/history/predictions">预测历史</el-menu-item>
-        <el-menu-item index="/history/tasks">任务日志</el-menu-item>
+        <!-- <el-menu-item index="/history/tasks">任务日志</el-menu-item> -->
       </el-menu>
     </el-header>
     <el-main class="app-main">

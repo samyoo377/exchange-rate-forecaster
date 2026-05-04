@@ -9,8 +9,8 @@ import type {
 
 const http = axios.create({ baseURL: "/" })
 
-export async function getDashboard(symbol = "USDCNH"): Promise<DashboardData | null> {
-  const res = await http.get<ApiResponse<DashboardData>>(`/api/v1/dashboard/latest?symbol=${symbol}`)
+export async function getDashboard(symbol = "USDCNH", interval = "1d"): Promise<DashboardData | null> {
+  const res = await http.get<ApiResponse<DashboardData>>(`/api/v1/dashboard/latest?symbol=${symbol}&interval=${interval}`)
   if (res.data.code !== 0) throw new Error(res.data.message)
   return res.data.data
 }
@@ -77,20 +77,27 @@ export interface ChatStreamOptions {
   message: string
   symbol?: string
   horizon?: string
+  sessionId?: string
+  attachmentIds?: string[]
   history?: { role: "user" | "assistant"; content: string }[]
   onChunk: (content: string) => void
+  onThinking?: () => void
   onError?: (error: string) => void
   onDone?: () => void
+  onSessionId?: (id: string) => void
   signal?: AbortSignal
 }
 
 export async function streamChatMessage(opts: ChatStreamOptions) {
-  const { message, symbol = "USDCNH", horizon = "T+2", history = [], onChunk, onError, onDone, signal } = opts
+  const {
+    message, symbol = "USDCNH", horizon = "T+2", sessionId, attachmentIds,
+    history = [], onChunk, onThinking, onError, onDone, onSessionId, signal,
+  } = opts
 
   const response = await fetch("/api/v1/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, symbol, horizon, history }),
+    body: JSON.stringify({ message, symbol, horizon, sessionId, attachmentIds, history }),
     signal,
   })
 
@@ -131,6 +138,14 @@ export async function streamChatMessage(opts: ChatStreamOptions) {
           onError?.(parsed.error)
           return
         }
+        if (parsed.sessionId) {
+          onSessionId?.(parsed.sessionId)
+          continue
+        }
+        if (parsed.thinking) {
+          onThinking?.()
+          continue
+        }
         if (parsed.content) onChunk(parsed.content)
       } catch {
         // skip malformed chunks
@@ -139,4 +154,86 @@ export async function streamChatMessage(opts: ChatStreamOptions) {
   }
 
   onDone?.()
+}
+
+export interface NewsDigest {
+  id: string
+  digestDate: string
+  symbol: string
+  headline: string
+  summary: string
+  keyFactors: { factor: string; direction: string; detail: string }[]
+  sentiment: string
+  modelVersion: string
+  createdAt: string
+}
+
+export async function getLatestNewsDigest(symbol = "USDCNH"): Promise<NewsDigest | null> {
+  const res = await http.get<ApiResponse<NewsDigest>>(`/api/v1/news/digest/latest?symbol=${symbol}`)
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data
+}
+
+export async function triggerNewsDigest(symbol = "USDCNH") {
+  const res = await http.post<ApiResponse<{ digestId: string; headline: string }>>(
+    "/api/v1/news/digest/trigger",
+    { symbol }
+  )
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data
+}
+
+// ── Chat Sessions ──
+
+export interface ChatSessionSummary {
+  id: string
+  title: string | null
+  symbol: string
+  horizon: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ChatSessionDetail {
+  id: string
+  title: string | null
+  symbol: string
+  horizon: string
+  messages: { id: string; role: string; content: string; attachments: string | null; createdAt: string }[]
+}
+
+export async function getChatSessions(scope = "web"): Promise<ChatSessionSummary[]> {
+  const res = await http.get<ApiResponse<ChatSessionSummary[]>>(`/api/v1/chat/sessions?scope=${scope}`)
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data ?? []
+}
+
+export async function getChatSession(id: string): Promise<ChatSessionDetail | null> {
+  const res = await http.get<ApiResponse<ChatSessionDetail>>(`/api/v1/chat/sessions/${id}`)
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data
+}
+
+export async function deleteChatSession(id: string) {
+  const res = await http.delete<ApiResponse<{ deleted: boolean }>>(`/api/v1/chat/sessions/${id}`)
+  if (res.data.code !== 0) throw new Error(res.data.message)
+}
+
+// ── File Upload ──
+
+export interface UploadedFileInfo {
+  id: string
+  storedPath: string
+  originalName: string
+  mimeType: string
+}
+
+export async function uploadFile(file: File): Promise<UploadedFileInfo> {
+  const formData = new FormData()
+  formData.append("file", file)
+  const res = await http.post<ApiResponse<UploadedFileInfo>>("/api/v1/files/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  })
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data as UploadedFileInfo
 }

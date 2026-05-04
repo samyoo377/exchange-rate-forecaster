@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -11,10 +11,10 @@ model RawMarketData {
   id           String   @id @default(cuid())
   source       String
   symbol       String
-  payload      String
+  payload      String   @db.Text
   fetchedAt    DateTime
   status       String
-  errorMessage String?
+  errorMessage String?  @db.Text
   createdAt    DateTime @default(now())
 }
 
@@ -30,41 +30,162 @@ model NormalizedMarketSnapshot {
   source       String
   version      String
   createdAt    DateTime @default(now())
+
+  @@unique([symbol, snapshotDate, version])
 }
 
 model InsightSummary {
   id           String   @id @default(cuid())
   symbol       String
   summaryTitle String
-  summaryText  String
-  drivers      String
-  tags         String
-  sourceRefs   String
+  summaryText  String   @db.Text
+  drivers      String   @db.Text
+  tags         String   @db.Text
+  sourceRefs   String   @db.Text
   createdAt    DateTime @default(now())
 }
 
 model PredictionResult {
   id               String   @id @default(cuid())
   symbol           String
-  userQuery        String
+  userQuery        String   @db.Text
   horizon          String
   direction        String
   confidence       Float
-  rationale        String
-  riskNotes        String
+  rationale        String   @db.Text
+  riskNotes        String   @db.Text
   modelVersion     String
-  dataSnapshotRefs String
+  dataSnapshotRefs String   @db.Text
   createdAt        DateTime @default(now())
 }
 
 model TaskRunLog {
-  id          String   @id @default(cuid())
-  taskType    String
-  status      String
-  inputRef    String?
-  outputRef   String?
-  startedAt   DateTime
-  finishedAt  DateTime?
-  errorMessage String?
-  createdAt   DateTime @default(now())
+  id           String    @id @default(cuid())
+  taskType     String
+  status       String
+  inputRef     String?   @db.Text
+  outputRef    String?   @db.Text
+  startedAt    DateTime
+  finishedAt   DateTime?
+  errorMessage String?   @db.Text
+  createdAt    DateTime  @default(now())
+}
+
+model NewsRawItem {
+  id          String    @id @default(cuid())
+  source      String
+  title       String
+  url         String
+  summary     String?   @db.Text
+  publishedAt DateTime?
+  fetchedAt   DateTime  @default(now())
+  category    String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([url])
+}
+
+model NewsDigest {
+  id           String   @id @default(cuid())
+  digestDate   DateTime @default(now())
+  symbol       String   @default("USDCNH")
+  headline     String
+  summary      String   @db.Text
+  keyFactors   String   @db.Text
+  sentiment    String
+  rawItemIds   String   @db.Text
+  modelVersion String
+  createdAt    DateTime @default(now())
+}
+
+// ── Feature 1: Chat History + File Upload ──
+
+model ChatSession {
+  id        String        @id @default(cuid())
+  scope     String        // "web" | "admin"
+  title     String?
+  symbol    String        @default("USDCNH")
+  horizon   String        @default("T+2")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
+
+  @@index([scope, updatedAt])
+}
+
+model ChatMessage {
+  id          String      @id @default(cuid())
+  sessionId   String
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role        String      // "user" | "assistant" | "system"
+  content     String      @db.MediumText
+  attachments String?     @db.Text // JSON array of UploadedFile ids
+  createdAt   DateTime    @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model UploadedFile {
+  id           String   @id @default(cuid())
+  originalName String
+  storedPath   String
+  mimeType     String
+  sizeBytes    Int
+  sessionId    String?
+  createdAt    DateTime @default(now())
+}
+
+// ── Feature 2: News Source Management ──
+
+model NewsSource {
+  id              String    @id @default(cuid())
+  name            String    @unique
+  url             String
+  type            String    // "rss" | "json-api" | "twitter"
+  category        String    // "forex" | "finance" | "economy" | "macro" | "social"
+  enabled         Boolean   @default(true)
+  fetchIntervalMs Int       @default(60000)
+  lastFetchedAt   DateTime?
+  lastError       String?   @db.Text
+  parseConfig     String?   @db.Text // JSON custom parse rules
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  fetchLogs       NewsFetchLog[]
+}
+
+model NewsFetchLog {
+  id              String    @id @default(cuid())
+  sourceId        String
+  source          NewsSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  sourceName      String
+  requestUrl      String    @db.Text
+  requestMethod   String    @default("GET")
+  responseStatus  Int?
+  responseBody    String?   @db.MediumText
+  fetchedCount    Int       @default(0)
+  success         Boolean   @default(false)
+  error           String?   @db.Text
+  startedAt       DateTime
+  finishedAt      DateTime?
+  durationMs      Int?
+  createdAt       DateTime  @default(now())
+
+  @@index([sourceId, createdAt])
+}
+
+// ── Feature 3: Indicator Configuration ──
+
+model IndicatorConfig {
+  id               String   @id @default(cuid())
+  indicatorType    String   @unique // RSI | STOCH | CCI | ADX | AO | MOM | custom-*
+  displayName      String
+  description      String?  @db.Text
+  formulaLatex     String?  @db.Text
+  formulaExpression String?  @db.Text // mathjs-compatible expression for custom indicators
+  params           String   @db.Text // JSON: {"period": 14}
+  signalThresholds String   @db.Text // JSON: {"buyBelow": 30, "sellAbove": 70}
+  enabled          Boolean  @default(true)
+  weight           Float    @default(1.0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }

@@ -8,3 +8,5 @@ dist
 pnpm-lock.yaml
 prisma/dev.db
 .env.development
+ai-config.ts
+server/uploads/

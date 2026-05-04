@@ -44,7 +44,7 @@
       <el-col :xs="24" :md="16">
         <el-row :gutter="12" style="margin-bottom:12px">
           <el-col :span="24">
-            <MarketChart :series="marketStore.series" />
+            <MarketChart :series="marketStore.series" @interval-change="onIntervalChange" />
           </el-col>
         </el-row>
         <el-row :gutter="12" style="margin-bottom:12px">
@@ -88,6 +88,10 @@ function formatDate(iso: string) {
 async function handleRefresh(source: string) {
   await marketStore.refresh(source)
   if (!marketStore.error) ElMessage.success("数据刷新成功")
+}
+
+async function onIntervalChange(interval: string) {
+  await marketStore.setInterval(interval)
 }
 </script>
 

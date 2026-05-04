@@ -15,9 +15,9 @@ export const router = createRouter({
       path: "/history/predictions",
       component: () => import("../pages/PredictionHistoryPage.vue"),
     },
-    {
-      path: "/history/tasks",
-      component: () => import("../pages/TaskHistoryPage.vue"),
-    },
+    // {
+    //   path: "/history/tasks",
+    //   component: () => import("../pages/TaskHistoryPage.vue"),
+    // },
   ],
 })

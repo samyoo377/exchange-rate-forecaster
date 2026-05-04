@@ -10,6 +10,7 @@
     "typecheck": "pnpm -r typecheck",
     "dev:server": "pnpm --filter exchange-rate-server dev",
     "dev:web": "pnpm --filter exchange-rate-web dev",
+    "dev:admin": "pnpm --filter exchange-rate-admin dev",
     "db:generate": "pnpm --filter exchange-rate-server db:generate",
     "db:push": "pnpm --filter exchange-rate-server db:push",
     "db:seed": "pnpm --filter exchange-rate-server db:seed",
@@ -25,5 +26,11 @@
       "vue-demi",
       "vue-echarts"
     ]
+  },
+  "devDependencies": {
+    "prisma": "5.22.0"
+  },
+  "dependencies": {
+    "@prisma/client": "5.22.0"
   }
 }
