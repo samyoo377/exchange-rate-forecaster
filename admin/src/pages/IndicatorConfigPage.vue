@@ -11,191 +11,273 @@
         <span class="flow-arrow">→</span>
         <span class="flow-step">综合预测</span>
       </div>
-      <el-button type="primary" style="margin-left: auto" @click="showAddDialog">新增指标</el-button>
     </div>
 
-    <div v-loading="loading" class="cards-grid">
-      <el-card v-for="config in configs" :key="config.id" class="indicator-card"
-               :class="{ disabled: !config.enabled }">
-        <template #header>
-          <div class="card-header">
-            <div class="card-title">
-              <el-switch v-model="config.enabled" size="small" style="margin-right: 8px" />
-              <span>{{ config.displayName }}</span>
-              <el-tag v-if="isDirty(config)" size="small" type="warning" style="margin-left: 8px">未保存</el-tag>
-            </div>
-            <div class="card-header-right">
-              <el-tag size="small" type="info">{{ config.indicatorType }}</el-tag>
-              <el-button
-                v-if="isCustomType(config.indicatorType)"
-                size="small" type="danger" text
-                @click="confirmDelete(config)"
-              ><el-icon><Delete /></el-icon></el-button>
-            </div>
-          </div>
-        </template>
+    <!-- ═══ Section 1: OHLC Data Preview ═══ -->
+    <el-card shadow="never" class="section-card">
+      <template #header>
+        <div class="section-header">
+          <span class="section-title">行情数据预览</span>
+          <el-checkbox-group v-model="visibleFields" size="small" class="field-checks">
+            <el-checkbox v-for="f in ohlcFields" :key="f.value" :value="f.value">
+              <span :style="{ color: f.color }">{{ f.label }}</span>
+            </el-checkbox>
+          </el-checkbox-group>
+        </div>
+      </template>
+      <div ref="ohlcChartRef" class="chart-box" v-loading="ohlcLoading" />
+    </el-card>
 
-        <div class="card-body">
-          <!-- Formula Section -->
-          <div class="formula-section">
-            <div class="section-label">公式 (LaTeX)</div>
-            <el-input
-              v-model="config.formulaLatex"
-              type="textarea"
-              :autosize="{ minRows: 1, maxRows: 4 }"
-              placeholder="LaTeX 公式，如 RSI = 100 - \frac{100}{1 + RS}"
-              size="small"
-            />
-          </div>
+    <!-- ═══ Section 2: Formula Builder ═══ -->
+    <el-card shadow="never" class="section-card">
+      <template #header>
+        <span class="section-title">公式构建 & 预览</span>
+      </template>
 
-          <!-- Formula Expression with editor button -->
-          <div class="formula-section" style="margin-top: 8px">
-            <div class="section-label">
-              计算表达式 (mathjs)
-              <el-tooltip content="可用函数: sma, ema, stddev, highest, lowest, change, sin, cos, tan, log, sqrt, abs, round, ceil, floor, exp, pow, max, min。变量: close, open, high, low, volume, period" placement="top">
-                <el-icon style="margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
-              </el-tooltip>
+      <el-row :gutter="16">
+        <!-- Left: Formula Input -->
+        <el-col :span="12">
+          <div class="builder-panel">
+            <!-- Quick-insert: data fields -->
+            <div class="insert-group">
+              <div class="insert-label">数据字段</div>
+              <div class="chip-row">
+                <el-button v-for="f in ohlcFields" :key="f.value"
+                  size="small" plain @click="insertToFormula(f.value)"
+                  :style="{ borderColor: f.color, color: f.color }">
+                  {{ f.value }}
+                </el-button>
+                <el-button size="small" plain @click="insertToFormula('period')">period</el-button>
+                <el-button size="small" plain @click="insertToFormula('n')">n</el-button>
+              </div>
             </div>
-            <div class="expression-row">
+
+            <!-- Quick-insert: series functions -->
+            <div class="insert-group">
+              <div class="insert-label">序列函数</div>
+              <div class="chip-row">
+                <el-button v-for="f in seriesFns" :key="f.label"
+                  size="small" type="primary" plain @click="insertToFormula(f.template)">
+                  {{ f.label }}
+                </el-button>
+              </div>
+            </div>
+
+            <!-- Quick-insert: math functions -->
+            <div class="insert-group">
+              <div class="insert-label">数学函数</div>
+              <div class="chip-row">
+                <el-button v-for="f in mathFns" :key="f" size="small" plain @click="insertToFormula(f + '(')">
+                  {{ f }}
+                </el-button>
+              </div>
+            </div>
+
+            <!-- Quick-insert: operators -->
+            <div class="insert-group">
+              <div class="insert-label">运算符</div>
+              <div class="chip-row">
+                <el-button v-for="op in operators" :key="op.label" size="small"
+                  @click="insertToFormula(op.value)" class="op-btn">{{ op.label }}</el-button>
+              </div>
+            </div>
+
+            <!-- Formula textarea -->
+            <div class="formula-input-area">
               <el-input
-                v-model="config.formulaExpression"
+                ref="formulaInputRef"
+                v-model="formulaExpr"
                 type="textarea"
-                :autosize="{ minRows: 1, maxRows: 4 }"
-                placeholder="如: sma(close, period) 或 (close - sma(close, 20)) / stddev(close, 20)"
-                size="small"
-                @blur="validateExpression(config)"
+                :autosize="{ minRows: 2, maxRows: 5 }"
+                placeholder="输入公式，如: sma(close, period)  或  (close - sma(close, 20)) / stddev(close, 20)"
+                @blur="onFormulaBlur"
+                @click="saveCursorPos"
+                @keyup="saveCursorPos"
               />
-              <el-button size="small" type="primary" @click="openFormulaEditor(config)" style="margin-left: 6px; align-self: flex-start">
-                <el-icon><EditPen /></el-icon>
-                编辑器
-              </el-button>
+              <div class="formula-status">
+                <el-tag v-if="formulaError" type="danger" size="small">{{ formulaError }}</el-tag>
+                <el-tag v-else-if="formulaExpr && formulaValid" type="success" size="small">公式有效</el-tag>
+                <el-button size="small" type="primary" plain @click="doPreview" :loading="previewLoading"
+                  :disabled="!formulaExpr.trim()">
+                  预览
+                </el-button>
+              </div>
             </div>
-            <el-tag v-if="config._formulaError" type="danger" size="small" style="margin-top: 4px">
-              {{ config._formulaError }}
+
+            <!-- Common templates -->
+            <div class="insert-group">
+              <div class="insert-label">常用模板</div>
+              <div class="chip-row">
+                <el-button v-for="t in templates" :key="t.name" size="small" round
+                  @click="formulaExpr = t.expr; doPreview()">{{ t.name }}</el-button>
+              </div>
+            </div>
+          </div>
+        </el-col>
+
+        <!-- Right: Preview Chart -->
+        <el-col :span="12">
+          <div class="preview-panel">
+            <div class="preview-title">公式输出预览</div>
+            <div ref="previewChartRef" class="chart-box preview-chart" v-loading="previewLoading">
+              <div v-if="!previewData && !previewLoading" class="preview-empty">
+                输入公式后点击"预览"查看计算结果
+              </div>
+            </div>
+          </div>
+        </el-col>
+      </el-row>
+
+      <!-- Create form -->
+      <el-divider />
+      <div class="create-form">
+        <el-row :gutter="12">
+          <el-col :span="4">
+            <el-input v-model="newForm.indicatorType" placeholder="指标ID (如 CUSTOM_BB)" size="small" />
+          </el-col>
+          <el-col :span="4">
+            <el-input v-model="newForm.displayName" placeholder="显示名称" size="small" />
+          </el-col>
+          <el-col :span="4">
+            <el-input v-model="newForm.description" placeholder="描述（可选）" size="small" />
+          </el-col>
+          <el-col :span="4">
+            <el-input v-model="newForm.params" placeholder='参数 {"period": 14}' size="small" />
+          </el-col>
+          <el-col :span="4">
+            <el-input v-model="newForm.signalThresholds" placeholder='阈值 {"buyBelow": 30}' size="small" />
+          </el-col>
+          <el-col :span="2">
+            <el-input-number v-model="newForm.weight" :min="0" :max="2" :step="0.1" size="small" style="width:100%" />
+          </el-col>
+          <el-col :span="2">
+            <el-button type="success" size="small" @click="createIndicator" :loading="createLoading"
+              :disabled="!newForm.indicatorType || !newForm.displayName" style="width:100%">
+              生成指标
+            </el-button>
+          </el-col>
+        </el-row>
+      </div>
+    </el-card>
+
+    <!-- ═══ Section 3: Indicator Table ═══ -->
+    <el-card shadow="never" class="section-card">
+      <template #header>
+        <span class="section-title">已配置指标</span>
+      </template>
+      <el-table :data="configs" v-loading="tableLoading" stripe border size="small" style="width:100%">
+        <el-table-column label="启用" width="70" align="center">
+          <template #default="{ row }">
+            <el-switch v-model="row.enabled" size="small" @change="toggleEnabled(row)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="140">
+          <template #default="{ row }">
+            <el-tag size="small" :type="isBuiltin(row.indicatorType) ? 'info' : 'warning'">
+              {{ row.indicatorType }}
             </el-tag>
-            <el-tag v-else-if="config.formulaExpression && config._formulaValid" type="success" size="small" style="margin-top: 4px">
-              公式有效
-            </el-tag>
-          </div>
+            <el-tag v-if="isBuiltin(row.indicatorType)" size="small" type="info" effect="plain"
+              style="margin-left:4px">内置</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="名称" prop="displayName" width="140" />
+        <el-table-column label="计算表达式" min-width="220">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.formulaExpression" :content="row.formulaExpression" placement="top" :show-after="300">
+              <code class="formula-cell">{{ row.formulaExpression }}</code>
+            </el-tooltip>
+            <span v-else class="no-formula">内置算法</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="权重" prop="weight" width="80" align="center" />
+        <el-table-column label="操作" width="140" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" text @click="openEditDialog(row)">
+              <el-icon><EditPen /></el-icon> 编辑
+            </el-button>
+            <el-button v-if="!isBuiltin(row.indicatorType)" size="small" type="danger" text @click="confirmDelete(row)">
+              <el-icon><Delete /></el-icon>
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
-          <div class="description" v-if="config.description">
-            <el-text type="info" size="small">{{ config.description }}</el-text>
-          </div>
-
-          <el-divider />
-
-          <div class="params-section">
-            <div class="section-label">
-              参数
-              <el-button size="small" text type="primary" @click="addParam(config)" style="margin-left: 8px">+ 添加</el-button>
-            </div>
-            <div class="param-row" v-for="(val, key) in config._parsedParams" :key="key">
-              <span class="param-label">{{ paramLabel(key as string) }}</span>
-              <el-input-number
-                v-model="config._parsedParams[key as string]"
-                :min="1" :max="200" :step="1" size="small"
-              />
-              <el-button v-if="isCustomType(config.indicatorType)" size="small" text type="danger" @click="removeParam(config, key as string)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </div>
-          </div>
-
-          <el-divider />
-
-          <div class="thresholds-section">
-            <div class="section-label">
-              信号阈值
-              <el-button size="small" text type="primary" @click="addThreshold(config)" style="margin-left: 8px">+ 添加</el-button>
-            </div>
-            <div class="param-row" v-for="(val, key) in config._parsedThresholds" :key="key">
-              <span class="param-label" :class="thresholdClass(key as string)">{{ thresholdLabel(key as string) }}</span>
-              <el-input-number
-                v-if="typeof val === 'number'"
-                v-model="config._parsedThresholds[key as string]"
-                :step="config.indicatorType === 'ADX' ? 0.1 : 1" size="small"
-              />
-              <el-switch
-                v-else-if="typeof val === 'boolean'"
-                v-model="config._parsedThresholds[key as string]"
-                size="small"
-              />
-              <el-button v-if="isCustomType(config.indicatorType)" size="small" text type="danger" @click="removeThreshold(config, key as string)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </div>
-          </div>
-
-          <el-divider />
-
-          <div class="weight-section">
-            <div class="section-label">预测权重</div>
-            <el-slider v-model="config.weight" :min="0" :max="2" :step="0.1"
-                       :marks="{ 0: '0', 1: '1', 2: '2' }" show-input />
-          </div>
-          <el-divider />
-
-          <AiConfigHelper
-            :indicatorType="config.indicatorType"
-            :displayName="config.displayName"
-            :currentParams="JSON.stringify(config._parsedParams)"
-            :currentThresholds="JSON.stringify(config._parsedThresholds)"
-            :formulaExpression="config.formulaExpression ?? undefined"
-          />
-        </div>
-
-        <div class="card-actions">
-          <el-button size="small" type="primary" @click="save(config)" :loading="config._saving">保存</el-button>
-          <el-button size="small" @click="resetOne(config)">重置</el-button>
-        </div>
-      </el-card>
-    </div>
-
-    <!-- Add Indicator Dialog -->
-    <el-dialog v-model="addDialogVisible" title="新增指标" width="560px">
-      <el-form :model="addForm" label-width="110px" label-position="left">
-        <el-form-item label="指标类型ID" required>
-          <el-input v-model="addForm.indicatorType" placeholder="唯一标识，如 CUSTOM_BB" />
+    <!-- ═══ Edit Dialog ═══ -->
+    <el-dialog v-model="editDialogVisible" :title="`编辑指标: ${editForm.displayName}`" width="720px"
+      :close-on-click-modal="false" destroy-on-close>
+      <el-form :model="editForm" label-width="110px" label-position="left" size="small">
+        <el-form-item label="指标类型">
+          <el-input v-model="editForm.indicatorType" disabled />
         </el-form-item>
-        <el-form-item label="显示名称" required>
-          <el-input v-model="addForm.displayName" placeholder="如 布林带" />
+        <el-form-item label="显示名称">
+          <el-input v-model="editForm.displayName" />
         </el-form-item>
         <el-form-item label="描述">
-          <el-input v-model="addForm.description" type="textarea" :rows="2" />
+          <el-input v-model="editForm.description" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="LaTeX公式">
-          <el-input v-model="addForm.formulaLatex" type="textarea" :rows="2" placeholder="BB = SMA ± k \cdot \sigma" />
+        <el-form-item label="LaTeX 公式">
+          <el-input v-model="editForm.formulaLatex" type="textarea" :rows="2"
+            placeholder="LaTeX 展示公式（可选）" />
         </el-form-item>
         <el-form-item label="计算表达式">
-          <div style="display:flex;gap:6px;width:100%">
-            <el-input v-model="addForm.formulaExpression" type="textarea" :rows="2"
-              placeholder="sma(close, period) + 2 * stddev(close, period)" style="flex:1" />
-            <el-button type="primary" @click="openAddFormulaEditor" style="align-self:flex-start">编辑器</el-button>
+          <div style="display:flex;gap:8px;width:100%">
+            <el-input v-model="editForm.formulaExpression" type="textarea" :rows="2"
+              :disabled="isBuiltin(editForm.indicatorType)"
+              placeholder="mathjs 表达式" style="flex:1"
+              @blur="validateEditExpression" />
+            <el-button v-if="!isBuiltin(editForm.indicatorType)" type="primary"
+              @click="openFormulaEditor" style="align-self:flex-start">编辑器</el-button>
+          </div>
+          <el-tag v-if="editFormulaError" type="danger" size="small" style="margin-top:4px">{{ editFormulaError }}</el-tag>
+          <el-tag v-else-if="editForm.formulaExpression && editFormulaValid" type="success" size="small" style="margin-top:4px">公式有效</el-tag>
+        </el-form-item>
+
+        <el-divider />
+
+        <el-form-item label="参数">
+          <div class="params-editor">
+            <div v-for="(val, key) in editParsedParams" :key="key" class="param-row">
+              <span class="param-label">{{ paramLabel(key as string) }}</span>
+              <el-input-number v-model="editParsedParams[key as string]" :min="1" :max="200" size="small" />
+              <el-button v-if="!isBuiltin(editForm.indicatorType)" size="small" text type="danger"
+                @click="delete editParsedParams[key as string]"><el-icon><Delete /></el-icon></el-button>
+            </div>
+            <el-button size="small" text type="primary" @click="showAddParamDialog">+ 添加参数</el-button>
           </div>
         </el-form-item>
-        <el-form-item label="参数 (JSON)">
-          <el-input v-model="addForm.params" placeholder='{"period": 20}' />
+
+        <el-form-item label="信号阈值">
+          <div class="params-editor">
+            <div v-for="(val, key) in editParsedThresholds" :key="key" class="param-row">
+              <span class="param-label" :class="thresholdClass(key as string)">{{ thresholdLabel(key as string) }}</span>
+              <el-input-number v-if="typeof val === 'number'" v-model="editParsedThresholds[key as string]" :step="1" size="small" />
+              <el-switch v-else-if="typeof val === 'boolean'" v-model="editParsedThresholds[key as string]" size="small" />
+              <el-button v-if="!isBuiltin(editForm.indicatorType)" size="small" text type="danger"
+                @click="delete editParsedThresholds[key as string]"><el-icon><Delete /></el-icon></el-button>
+            </div>
+            <el-button size="small" text type="primary" @click="showAddThresholdDialog">+ 添加阈值</el-button>
+          </div>
         </el-form-item>
-        <el-form-item label="信号阈值 (JSON)">
-          <el-input v-model="addForm.signalThresholds" placeholder='{"buyBelow": 30, "sellAbove": 70}' />
-        </el-form-item>
-        <el-form-item label="权重">
-          <el-input-number v-model="addForm.weight" :min="0" :max="2" :step="0.1" />
+
+        <el-form-item label="预测权重">
+          <el-slider v-model="editForm.weight" :min="0" :max="2" :step="0.1"
+            :marks="{ 0: '0', 1: '1', 2: '2' }" show-input style="padding-right: 40px" />
         </el-form-item>
       </el-form>
 
+      <el-divider />
       <AiConfigHelper
-        :indicatorType="addForm.indicatorType"
-        :displayName="addForm.displayName"
-        :currentParams="addForm.params"
-        :currentThresholds="addForm.signalThresholds"
-        :formulaExpression="addForm.formulaExpression"
-        style="margin-top: 12px"
+        :indicatorType="editForm.indicatorType"
+        :displayName="editForm.displayName"
+        :currentParams="JSON.stringify(editParsedParams)"
+        :currentThresholds="JSON.stringify(editParsedThresholds)"
+        :formulaExpression="editForm.formulaExpression ?? undefined"
       />
 
       <template #footer>
-        <el-button @click="addDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="addIndicator" :loading="addLoading">创建</el-button>
+        <el-button @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveEdit" :loading="editSaving">保存</el-button>
       </template>
     </el-dialog>
 
@@ -240,7 +322,7 @@
       </template>
     </el-dialog>
 
-    <!-- Formula Editor -->
+    <!-- Formula Editor Dialog -->
     <FormulaEditor
       v-model="formulaEditorVisible"
       :initialExpression="formulaEditorInitial"
@@ -250,15 +332,289 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from "vue"
+import { ref, reactive, onMounted, watch, nextTick, onBeforeUnmount } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
+import * as echarts from "echarts"
 import {
   getIndicatorConfigs, updateIndicatorConfig,
   createIndicatorConfig, deleteIndicatorConfig, validateFormula,
+  getOhlcData, previewFormula,
+  type OhlcBarData, type FormulaPreviewResult,
 } from "../api/index"
 import FormulaEditor from "../components/FormulaEditor.vue"
 import AiConfigHelper from "../components/AiConfigHelper.vue"
 
+const BUILTIN_TYPES = new Set(["RSI", "STOCH", "CCI", "ADX", "AO", "MOM"])
+function isBuiltin(type: string) { return BUILTIN_TYPES.has(type) }
+
+// ── OHLC field definitions ──
+const ohlcFields = [
+  { label: "收盘价", value: "close", color: "#5470c6" },
+  { label: "开盘价", value: "open", color: "#91cc75" },
+  { label: "最高价", value: "high", color: "#ee6666" },
+  { label: "最低价", value: "low", color: "#fac858" },
+  { label: "成交量", value: "volume", color: "#73c0de" },
+]
+
+const seriesFns = [
+  { label: "SMA", template: "sma(close, period)" },
+  { label: "EMA", template: "ema(close, period)" },
+  { label: "STDDEV", template: "stddev(close, period)" },
+  { label: "HIGHEST", template: "highest(high, period)" },
+  { label: "LOWEST", template: "lowest(low, period)" },
+  { label: "CHANGE", template: "change(close, 1)" },
+]
+
+const mathFns = ["abs", "sqrt", "log", "exp", "pow", "sin", "cos", "round", "max", "min"]
+
+const operators = [
+  { label: "+", value: " + " },
+  { label: "-", value: " - " },
+  { label: "×", value: " * " },
+  { label: "÷", value: " / " },
+  { label: "^", value: "^" },
+  { label: "(", value: "(" },
+  { label: ")", value: ")" },
+  { label: ",", value: ", " },
+]
+
+const templates = [
+  { name: "布林带上轨", expr: "sma(close, period) + 2 * stddev(close, period)" },
+  { name: "布林带下轨", expr: "sma(close, period) - 2 * stddev(close, period)" },
+  { name: "价格偏离度", expr: "(close - sma(close, period)) / stddev(close, period)" },
+  { name: "波动率", expr: "stddev(close, period) / sma(close, period) * 100" },
+  { name: "动量EMA", expr: "ema(change(close, 1), period)" },
+  { name: "高低差比", expr: "(highest(high, period) - lowest(low, period)) / close * 100" },
+]
+
+// ── Section 1: OHLC Chart ──
+const ohlcChartRef = ref<HTMLElement | null>(null)
+const ohlcLoading = ref(false)
+const visibleFields = ref(["close", "open", "high", "low", "volume"])
+const ohlcBars = ref<OhlcBarData[]>([])
+let ohlcChart: echarts.ECharts | null = null
+
+async function loadOhlcData() {
+  ohlcLoading.value = true
+  try {
+    const result = await getOhlcData(undefined, 60)
+    ohlcBars.value = result.bars
+    renderOhlcChart()
+  } catch (e: any) {
+    ElMessage.error("加载行情数据失败: " + (e.message || ""))
+  } finally {
+    ohlcLoading.value = false
+  }
+}
+
+function renderOhlcChart() {
+  if (!ohlcChartRef.value || ohlcBars.value.length === 0) return
+  if (!ohlcChart) {
+    ohlcChart = echarts.init(ohlcChartRef.value)
+  }
+
+  const dates = ohlcBars.value.map((b) => b.tradeDate)
+  const priceFields = ["close", "open", "high", "low"] as const
+  const fieldColors: Record<string, string> = {
+    close: "#5470c6", open: "#91cc75", high: "#ee6666", low: "#fac858", volume: "#73c0de",
+  }
+
+  const series: echarts.SeriesOption[] = []
+  for (const f of priceFields) {
+    if (!visibleFields.value.includes(f)) continue
+    series.push({
+      name: f,
+      type: "line",
+      data: ohlcBars.value.map((b) => b[f]),
+      smooth: true,
+      showSymbol: false,
+      lineStyle: { width: f === "close" ? 2 : 1 },
+      itemStyle: { color: fieldColors[f] },
+      yAxisIndex: 0,
+    })
+  }
+
+  if (visibleFields.value.includes("volume")) {
+    series.push({
+      name: "volume",
+      type: "bar",
+      data: ohlcBars.value.map((b) => b.volume ?? 0),
+      itemStyle: { color: "rgba(115,192,222,0.3)" },
+      yAxisIndex: 1,
+    })
+  }
+
+  const option: echarts.EChartsOption = {
+    tooltip: { trigger: "axis" },
+    legend: { show: true, top: 0 },
+    grid: { left: 60, right: 60, top: 30, bottom: 30 },
+    xAxis: { type: "category", data: dates, boundaryGap: false },
+    yAxis: [
+      { type: "value", name: "价格", scale: true, position: "left" },
+      { type: "value", name: "成交量", scale: true, position: "right", splitLine: { show: false },
+        axisLabel: { show: visibleFields.value.includes("volume") } },
+    ],
+    series,
+  }
+  ohlcChart.setOption(option, true)
+}
+
+watch(visibleFields, () => renderOhlcChart())
+
+// ── Section 2: Formula Builder ──
+const formulaInputRef = ref<any>(null)
+const formulaExpr = ref("")
+const formulaValid = ref(false)
+const formulaError = ref("")
+const previewLoading = ref(false)
+const previewData = ref<FormulaPreviewResult | null>(null)
+const previewChartRef = ref<HTMLElement | null>(null)
+let previewChart: echarts.ECharts | null = null
+let cursorPos = 0
+
+function saveCursorPos() {
+  nextTick(() => {
+    const textarea = formulaInputRef.value?.$el?.querySelector("textarea") as HTMLTextAreaElement | null
+    if (textarea) cursorPos = textarea.selectionStart ?? formulaExpr.value.length
+  })
+}
+
+function insertToFormula(text: string) {
+  const before = formulaExpr.value.slice(0, cursorPos)
+  const after = formulaExpr.value.slice(cursorPos)
+  formulaExpr.value = before + text + after
+  cursorPos += text.length
+  formulaError.value = ""
+  formulaValid.value = false
+  nextTick(() => {
+    const textarea = formulaInputRef.value?.$el?.querySelector("textarea") as HTMLTextAreaElement | null
+    if (textarea) {
+      textarea.focus()
+      textarea.setSelectionRange(cursorPos, cursorPos)
+    }
+  })
+}
+
+async function onFormulaBlur() {
+  saveCursorPos()
+  if (!formulaExpr.value.trim()) {
+    formulaValid.value = false
+    formulaError.value = ""
+    return
+  }
+  try {
+    const result = await validateFormula(formulaExpr.value)
+    formulaValid.value = result.valid
+    formulaError.value = result.error ?? ""
+  } catch {
+    formulaError.value = "验证请求失败"
+  }
+}
+
+async function doPreview() {
+  if (!formulaExpr.value.trim()) return
+  previewLoading.value = true
+  try {
+    const result = await previewFormula(formulaExpr.value, safeParseJson(newForm.params))
+    previewData.value = result
+    if (!result.valid) {
+      formulaError.value = result.error ?? "公式无效"
+      formulaValid.value = false
+    } else {
+      formulaValid.value = true
+      formulaError.value = ""
+      renderPreviewChart(result)
+    }
+  } catch (e: any) {
+    formulaError.value = e.message || "预览失败"
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function renderPreviewChart(data: FormulaPreviewResult) {
+  if (!previewChartRef.value) return
+  if (!previewChart) {
+    previewChart = echarts.init(previewChartRef.value)
+  }
+
+  const option: echarts.EChartsOption = {
+    tooltip: { trigger: "axis" },
+    grid: { left: 50, right: 20, top: 20, bottom: 30 },
+    xAxis: { type: "category", data: data.dates, boundaryGap: false },
+    yAxis: { type: "value", scale: true },
+    series: [{
+      name: "公式输出",
+      type: "line",
+      data: data.values,
+      smooth: true,
+      showSymbol: false,
+      lineStyle: { width: 2, color: "#e6a23c" },
+      itemStyle: { color: "#e6a23c" },
+      areaStyle: { color: "rgba(230,162,60,0.08)" },
+    }],
+  }
+  previewChart.setOption(option, true)
+}
+
+// ── Create form ──
+const newForm = reactive({
+  indicatorType: "",
+  displayName: "",
+  description: "",
+  params: '{"period": 14}',
+  signalThresholds: '{"buyBelow": 30, "sellAbove": 70}',
+  weight: 1.0,
+})
+const createLoading = ref(false)
+
+async function createIndicator() {
+  if (!newForm.indicatorType || !newForm.displayName) {
+    ElMessage.warning("指标类型ID和显示名称不能为空")
+    return
+  }
+  if (!formulaExpr.value.trim()) {
+    ElMessage.warning("请先输入计算表达式")
+    return
+  }
+  try {
+    safeParseJson(newForm.params)
+    safeParseJson(newForm.signalThresholds)
+  } catch {
+    ElMessage.error("参数或阈值 JSON 格式不正确")
+    return
+  }
+
+  createLoading.value = true
+  try {
+    await createIndicatorConfig({
+      indicatorType: newForm.indicatorType.toUpperCase(),
+      displayName: newForm.displayName,
+      description: newForm.description || null,
+      formulaExpression: formulaExpr.value,
+      params: newForm.params,
+      signalThresholds: newForm.signalThresholds,
+      weight: newForm.weight,
+    })
+    ElMessage.success(`指标 ${newForm.displayName} 已创建`)
+    newForm.indicatorType = ""
+    newForm.displayName = ""
+    newForm.description = ""
+    newForm.params = '{"period": 14}'
+    newForm.signalThresholds = '{"buyBelow": 30, "sellAbove": 70}'
+    newForm.weight = 1.0
+    formulaExpr.value = ""
+    previewData.value = null
+    if (previewChart) previewChart.clear()
+    await loadConfigs()
+  } catch (e: any) {
+    ElMessage.error(e.message || "创建失败")
+  } finally {
+    createLoading.value = false
+  }
+}
+
+// ── Section 3: Indicator Table ──
 interface IndicatorConfig {
   id: string
   indicatorType: string
@@ -270,88 +626,181 @@ interface IndicatorConfig {
   signalThresholds: string
   enabled: boolean
   weight: number
-  _saving?: boolean
-  _parsedParams: Record<string, any>
-  _parsedThresholds: Record<string, any>
-  _formulaValid?: boolean
-  _formulaError?: string
 }
-
-const BUILTIN_TYPES = new Set(["RSI", "STOCH", "CCI", "ADX", "AO", "MOM"])
 
 const configs = ref<IndicatorConfig[]>([])
-const loading = ref(false)
+const tableLoading = ref(false)
 
-interface OriginalState {
-  params: string
-  signalThresholds: string
-  weight: number
-  enabled: boolean
-  formulaLatex: string | null
-  formulaExpression: string | null
+async function loadConfigs() {
+  tableLoading.value = true
+  try {
+    configs.value = (await getIndicatorConfigs()) as any[]
+  } finally {
+    tableLoading.value = false
+  }
 }
-const originals = ref<Map<string, OriginalState>>(new Map())
 
-const addDialogVisible = ref(false)
-const addLoading = ref(false)
-const addForm = reactive({
+async function toggleEnabled(row: IndicatorConfig) {
+  try {
+    await updateIndicatorConfig(row.id, { enabled: row.enabled })
+    ElMessage.success(`${row.displayName} ${row.enabled ? "已启用" : "已禁用"}`)
+  } catch (e: any) {
+    row.enabled = !row.enabled
+    ElMessage.error(e.message || "更新失败")
+  }
+}
+
+async function confirmDelete(row: IndicatorConfig) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除指标 "${row.displayName}" (${row.indicatorType}) 吗？`,
+      "删除指标",
+      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" },
+    )
+    await deleteIndicatorConfig(row.id)
+    configs.value = configs.value.filter((c) => c.id !== row.id)
+    ElMessage.success("已删除")
+  } catch {
+    // cancelled
+  }
+}
+
+// ── Edit Dialog ──
+const editDialogVisible = ref(false)
+const editSaving = ref(false)
+const editFormulaValid = ref(false)
+const editFormulaError = ref("")
+const editForm = reactive<{
+  id: string
+  indicatorType: string
+  displayName: string
+  description: string
+  formulaLatex: string
+  formulaExpression: string
+  weight: number
+}>({
+  id: "",
   indicatorType: "",
   displayName: "",
   description: "",
   formulaLatex: "",
   formulaExpression: "",
-  params: '{"period": 14}',
-  signalThresholds: '{"buyBelow": 30, "sellAbove": 70}',
   weight: 1.0,
 })
+const editParsedParams = reactive<Record<string, any>>({})
+const editParsedThresholds = reactive<Record<string, any>>({})
 
-// Formula Editor state
-const formulaEditorVisible = ref(false)
-const formulaEditorInitial = ref("")
-let formulaEditorTarget: IndicatorConfig | null = null
-let formulaEditorMode: "edit" | "add" = "edit"
+function openEditDialog(row: IndicatorConfig) {
+  editForm.id = row.id
+  editForm.indicatorType = row.indicatorType
+  editForm.displayName = row.displayName
+  editForm.description = row.description ?? ""
+  editForm.formulaLatex = row.formulaLatex ?? ""
+  editForm.formulaExpression = row.formulaExpression ?? ""
+  editForm.weight = row.weight
+  editFormulaValid.value = false
+  editFormulaError.value = ""
 
-// Param dialog
-const paramDialogVisible = ref(false)
-const paramForm = reactive({ key: "", value: 14 })
-let paramTarget: IndicatorConfig | null = null
+  const params = safeParseJson(row.params)
+  const thresholds = safeParseJson(row.signalThresholds)
+  Object.keys(editParsedParams).forEach((k) => delete editParsedParams[k])
+  Object.keys(editParsedThresholds).forEach((k) => delete editParsedThresholds[k])
+  Object.assign(editParsedParams, params)
+  Object.assign(editParsedThresholds, thresholds)
 
-// Threshold dialog
-const thresholdDialogVisible = ref(false)
-const thresholdForm = reactive({ key: "", type: "number" as "number" | "boolean", numValue: 50, boolValue: false })
-let thresholdTarget: IndicatorConfig | null = null
-
-function isCustomType(type: string) {
-  return !BUILTIN_TYPES.has(type)
+  editDialogVisible.value = true
 }
 
-function safeParseJson(json: string): Record<string, any> {
-  try { return JSON.parse(json) } catch { return {} }
-}
-
-function hydrateConfig(raw: any): IndicatorConfig {
-  return {
-    ...raw,
-    _parsedParams: safeParseJson(raw.params),
-    _parsedThresholds: safeParseJson(raw.signalThresholds),
-    _formulaValid: false,
-    _formulaError: undefined,
+async function validateEditExpression() {
+  if (!editForm.formulaExpression?.trim()) {
+    editFormulaValid.value = false
+    editFormulaError.value = ""
+    return
+  }
+  try {
+    const result = await validateFormula(editForm.formulaExpression)
+    editFormulaValid.value = result.valid
+    editFormulaError.value = result.error ?? ""
+  } catch {
+    editFormulaError.value = "验证请求失败"
   }
 }
 
-function isDirty(config: IndicatorConfig): boolean {
-  const orig = originals.value.get(config.id)
-  if (!orig) return false
-  return (
-    config.enabled !== orig.enabled ||
-    config.weight !== orig.weight ||
-    (config.formulaLatex ?? "") !== (orig.formulaLatex ?? "") ||
-    (config.formulaExpression ?? "") !== (orig.formulaExpression ?? "") ||
-    JSON.stringify(config._parsedParams) !== orig.params ||
-    JSON.stringify(config._parsedThresholds) !== orig.signalThresholds
-  )
+async function saveEdit() {
+  editSaving.value = true
+  try {
+    const params = JSON.stringify(editParsedParams)
+    const signalThresholds = JSON.stringify(editParsedThresholds)
+    await updateIndicatorConfig(editForm.id, {
+      displayName: editForm.displayName,
+      description: editForm.description || null,
+      formulaLatex: editForm.formulaLatex || null,
+      formulaExpression: editForm.formulaExpression || null,
+      params,
+      signalThresholds,
+      weight: editForm.weight,
+    })
+    ElMessage.success(`${editForm.displayName} 已保存`)
+    editDialogVisible.value = false
+    await loadConfigs()
+  } catch (e: any) {
+    ElMessage.error(e.message || "保存失败")
+  } finally {
+    editSaving.value = false
+  }
 }
 
+// Formula editor dialog (for edit dialog)
+const formulaEditorVisible = ref(false)
+const formulaEditorInitial = ref("")
+
+function openFormulaEditor() {
+  formulaEditorInitial.value = editForm.formulaExpression ?? ""
+  formulaEditorVisible.value = true
+}
+
+function onFormulaEditorConfirm(expression: string) {
+  editForm.formulaExpression = expression
+  editFormulaValid.value = true
+  editFormulaError.value = ""
+}
+
+// ── Param / Threshold dialogs ──
+const paramDialogVisible = ref(false)
+const paramForm = reactive({ key: "", value: 14 })
+const thresholdDialogVisible = ref(false)
+const thresholdForm = reactive({
+  key: "", type: "number" as "number" | "boolean", numValue: 50, boolValue: false,
+})
+
+function showAddParamDialog() {
+  paramForm.key = ""
+  paramForm.value = 14
+  paramDialogVisible.value = true
+}
+
+function confirmAddParam() {
+  if (!paramForm.key.trim()) return
+  editParsedParams[paramForm.key.trim()] = paramForm.value
+  paramDialogVisible.value = false
+}
+
+function showAddThresholdDialog() {
+  thresholdForm.key = ""
+  thresholdForm.type = "number"
+  thresholdForm.numValue = 50
+  thresholdForm.boolValue = false
+  thresholdDialogVisible.value = true
+}
+
+function confirmAddThreshold() {
+  if (!thresholdForm.key.trim()) return
+  const val = thresholdForm.type === "number" ? thresholdForm.numValue : thresholdForm.boolValue
+  editParsedThresholds[thresholdForm.key.trim()] = val
+  thresholdDialogVisible.value = false
+}
+
+// ── Label helpers ──
 const paramLabels: Record<string, string> = {
   period: "周期", smoothK: "平滑K", shortPeriod: "短周期", longPeriod: "长周期",
 }
@@ -370,232 +819,32 @@ function thresholdClass(key: string) {
   return ""
 }
 
-// Formula editor
-function openFormulaEditor(config: IndicatorConfig) {
-  formulaEditorTarget = config
-  formulaEditorMode = "edit"
-  formulaEditorInitial.value = config.formulaExpression ?? ""
-  formulaEditorVisible.value = true
+function safeParseJson(json: string): Record<string, any> {
+  try { return JSON.parse(json) } catch { return {} }
 }
 
-function openAddFormulaEditor() {
-  formulaEditorTarget = null
-  formulaEditorMode = "add"
-  formulaEditorInitial.value = addForm.formulaExpression ?? ""
-  formulaEditorVisible.value = true
+// ── Resize handler ──
+function handleResize() {
+  ohlcChart?.resize()
+  previewChart?.resize()
 }
 
-function onFormulaEditorConfirm(expression: string) {
-  if (formulaEditorMode === "edit" && formulaEditorTarget) {
-    formulaEditorTarget.formulaExpression = expression
-    formulaEditorTarget._formulaValid = true
-    formulaEditorTarget._formulaError = undefined
-  } else {
-    addForm.formulaExpression = expression
-  }
-}
+// ── Init ──
+onMounted(async () => {
+  window.addEventListener("resize", handleResize)
+  await Promise.all([loadOhlcData(), loadConfigs()])
+})
 
-// Param management
-function addParam(config: IndicatorConfig) {
-  paramTarget = config
-  paramForm.key = ""
-  paramForm.value = 14
-  paramDialogVisible.value = true
-}
-
-function confirmAddParam() {
-  if (!paramForm.key.trim() || !paramTarget) return
-  paramTarget._parsedParams[paramForm.key.trim()] = paramForm.value
-  paramDialogVisible.value = false
-}
-
-function removeParam(config: IndicatorConfig, key: string) {
-  delete config._parsedParams[key]
-}
-
-// Threshold management
-function addThreshold(config: IndicatorConfig) {
-  thresholdTarget = config
-  thresholdForm.key = ""
-  thresholdForm.type = "number"
-  thresholdForm.numValue = 50
-  thresholdForm.boolValue = false
-  thresholdDialogVisible.value = true
-}
-
-function confirmAddThreshold() {
-  if (!thresholdForm.key.trim() || !thresholdTarget) return
-  const val = thresholdForm.type === "number" ? thresholdForm.numValue : thresholdForm.boolValue
-  thresholdTarget._parsedThresholds[thresholdForm.key.trim()] = val
-  thresholdDialogVisible.value = false
-}
-
-function removeThreshold(config: IndicatorConfig, key: string) {
-  delete config._parsedThresholds[key]
-}
-
-async function validateExpression(config: IndicatorConfig) {
-  if (!config.formulaExpression) {
-    config._formulaValid = false
-    config._formulaError = undefined
-    return
-  }
-  try {
-    const result = await validateFormula(config.formulaExpression)
-    config._formulaValid = result.valid
-    config._formulaError = result.error
-  } catch {
-    config._formulaError = "验证请求失败"
-    config._formulaValid = false
-  }
-}
-
-async function save(config: IndicatorConfig) {
-  config._saving = true
-  const params = JSON.stringify(config._parsedParams)
-  const signalThresholds = JSON.stringify(config._parsedThresholds)
-  try {
-    await updateIndicatorConfig(config.id, {
-      params,
-      signalThresholds,
-      enabled: config.enabled,
-      weight: config.weight,
-      formulaLatex: config.formulaLatex,
-      formulaExpression: config.formulaExpression,
-    })
-    config.params = params
-    config.signalThresholds = signalThresholds
-    originals.value.set(config.id, {
-      params,
-      signalThresholds,
-      weight: config.weight,
-      enabled: config.enabled,
-      formulaLatex: config.formulaLatex,
-      formulaExpression: config.formulaExpression,
-    })
-    ElMessage.success(`${config.displayName} 已保存`)
-  } catch (e: any) {
-    ElMessage.error(e.message || "保存失败")
-  } finally {
-    config._saving = false
-  }
-}
-
-function resetOne(config: IndicatorConfig) {
-  const orig = originals.value.get(config.id)
-  if (orig) {
-    config.params = orig.params
-    config.signalThresholds = orig.signalThresholds
-    config.weight = orig.weight
-    config.enabled = orig.enabled
-    config.formulaLatex = orig.formulaLatex
-    config.formulaExpression = orig.formulaExpression
-    config._parsedParams = safeParseJson(orig.params)
-    config._parsedThresholds = safeParseJson(orig.signalThresholds)
-    config._formulaError = undefined
-    config._formulaValid = false
-    ElMessage.info("已恢复到上次保存的值")
-  }
-}
-
-async function confirmDelete(config: IndicatorConfig) {
-  try {
-    await ElMessageBox.confirm(
-      `确定删除指标 "${config.displayName}" (${config.indicatorType}) 吗？`,
-      "删除指标",
-      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" }
-    )
-    await deleteIndicatorConfig(config.id)
-    configs.value = configs.value.filter((c) => c.id !== config.id)
-    originals.value.delete(config.id)
-    ElMessage.success("已删除")
-  } catch {
-    // cancelled
-  }
-}
-
-function showAddDialog() {
-  addForm.indicatorType = ""
-  addForm.displayName = ""
-  addForm.description = ""
-  addForm.formulaLatex = ""
-  addForm.formulaExpression = ""
-  addForm.params = '{"period": 14}'
-  addForm.signalThresholds = '{"buyBelow": 30, "sellAbove": 70}'
-  addForm.weight = 1.0
-  addDialogVisible.value = true
-}
-
-async function addIndicator() {
-  if (!addForm.indicatorType || !addForm.displayName) {
-    ElMessage.warning("指标类型ID和显示名称不能为空")
-    return
-  }
-  try {
-    safeParseJson(addForm.params)
-    safeParseJson(addForm.signalThresholds)
-  } catch {
-    ElMessage.error("参数或阈值 JSON 格式不正确")
-    return
-  }
-
-  addLoading.value = true
-  try {
-    const created = await createIndicatorConfig({
-      indicatorType: addForm.indicatorType.toUpperCase(),
-      displayName: addForm.displayName,
-      description: addForm.description || null,
-      formulaLatex: addForm.formulaLatex || null,
-      formulaExpression: addForm.formulaExpression || null,
-      params: addForm.params,
-      signalThresholds: addForm.signalThresholds,
-      weight: addForm.weight,
-    })
-    const hydrated = hydrateConfig(created)
-    configs.value.push(hydrated)
-    originals.value.set(created.id, {
-      params: created.params,
-      signalThresholds: created.signalThresholds,
-      weight: created.weight,
-      enabled: created.enabled,
-      formulaLatex: created.formulaLatex,
-      formulaExpression: created.formulaExpression,
-    })
-    addDialogVisible.value = false
-    ElMessage.success(`指标 ${addForm.displayName} 已创建`)
-  } catch (e: any) {
-    ElMessage.error(e.message || "创建失败")
-  } finally {
-    addLoading.value = false
-  }
-}
-
-async function loadConfigs() {
-  loading.value = true
-  try {
-    const raw = await getIndicatorConfigs()
-    configs.value = (raw as any[]).map(hydrateConfig)
-    for (const c of configs.value) {
-      originals.value.set(c.id, {
-        params: c.params,
-        signalThresholds: c.signalThresholds,
-        weight: c.weight,
-        enabled: c.enabled,
-        formulaLatex: c.formulaLatex,
-        formulaExpression: c.formulaExpression,
-      })
-    }
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(loadConfigs)
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", handleResize)
+  ohlcChart?.dispose()
+  previewChart?.dispose()
+})
 </script>
 
 <style scoped>
 .page { max-width: 1200px; }
-.page-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 20px; }
+.page-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
 .page-header h2 { margin: 0; font-size: 20px; }
 
 .flow-diagram { display: flex; align-items: center; gap: 8px; font-size: 14px; }
@@ -606,25 +855,46 @@ onMounted(loadConfigs)
 .flow-step.active { background: #409eff; color: #fff; font-weight: 600; }
 .flow-arrow { color: #c0c4cc; font-size: 18px; }
 
-.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 16px; }
+.section-card { margin-bottom: 16px; border-radius: 8px; }
+.section-header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.section-title { font-size: 14px; font-weight: 600; color: #303133; }
+.field-checks { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
 
-.indicator-card.disabled { opacity: 0.6; }
-.card-header { display: flex; justify-content: space-between; align-items: center; }
-.card-header-right { display: flex; align-items: center; gap: 6px; }
-.card-title { display: flex; align-items: center; font-weight: 600; }
+.chart-box { height: 260px; width: 100%; }
 
-.section-label { font-size: 12px; color: #909399; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; display: flex; align-items: center; }
-.description { margin-top: 8px; }
+/* Formula builder */
+.builder-panel { display: flex; flex-direction: column; gap: 10px; }
+.insert-group {}
+.insert-label { font-size: 11px; color: #909399; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip-row .el-button { font-size: 12px; padding: 4px 8px; }
+.op-btn { min-width: 32px; font-weight: 700; font-family: monospace; font-size: 14px; }
 
-.expression-row { display: flex; align-items: flex-start; }
+.formula-input-area { display: flex; flex-direction: column; gap: 6px; }
+.formula-status { display: flex; align-items: center; gap: 8px; }
 
-.param-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
+.preview-panel { display: flex; flex-direction: column; height: 100%; }
+.preview-title { font-size: 12px; color: #909399; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; }
+.preview-chart { flex: 1; min-height: 300px; }
+.preview-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: #c0c4cc; font-size: 13px;
+}
+
+/* Create form */
+.create-form {}
+
+/* Table */
+.formula-cell {
+  font-family: "Courier New", monospace; font-size: 12px; color: #606266;
+  display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.no-formula { color: #c0c4cc; font-size: 12px; }
+
+/* Edit dialog params */
+.params-editor { display: flex; flex-direction: column; gap: 8px; }
+.param-row { display: flex; align-items: center; gap: 8px; }
 .param-label { font-size: 13px; color: #606266; min-width: 80px; }
 .buy-label { color: #67c23a; font-weight: 600; }
 .sell-label { color: #f56c6c; font-weight: 600; }
-
-.weight-section { padding-right: 40px; }
-.card-actions { display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end; }
-
-.el-divider { margin: 12px 0; }
 </style>

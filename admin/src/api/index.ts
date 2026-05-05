@@ -53,6 +53,49 @@ export async function triggerDigest() {
   return unwrap(await http.post("/api/v1/admin/cron/trigger/digest"))
 }
 
+// ── Abort ──
+export async function abortTask(taskType: string) {
+  return unwrap(await http.post(`/api/v1/admin/cron/abort/${taskType}`))
+}
+
+// ── Digest Logs ──
+
+export interface DigestRawItem {
+  id: string
+  source: string
+  title: string
+  url: string
+  summary: string | null
+  publishedAt: string | null
+  category: string | null
+}
+
+export interface DigestDetail {
+  id: string
+  headline: string
+  summary: string
+  sentiment: string
+  keyFactors: { factor: string; direction: string; detail: string; heat?: number }[]
+  modelVersion: string
+  rawItems: DigestRawItem[]
+  rawItemCount: number
+}
+
+export interface DigestLogEntry {
+  id: string
+  status: string
+  startedAt: string
+  finishedAt: string | null
+  errorMessage: string | null
+  inputRef: string | null
+  durationMs: number | null
+  digest: DigestDetail | null
+}
+
+export async function getDigestLogs(page = 1, pageSize = 10): Promise<{ rows: DigestLogEntry[]; total: number }> {
+  return unwrap(await http.get(`/api/v1/admin/digest-logs?page=${page}&pageSize=${pageSize}`))
+}
+
 // ── Tables ──
 export async function getTableList(): Promise<TableInfo[]> {
   return unwrap(await http.get("/api/v1/admin/tables"))
@@ -233,6 +276,40 @@ export async function deleteIndicatorConfig(id: string): Promise<any> {
 
 export async function validateFormula(expression: string): Promise<{ valid: boolean; error?: string }> {
   return unwrap(await http.post("/api/v1/admin/indicator-configs/validate-formula", { expression }))
+}
+
+// ── OHLC Market Data ──
+
+export interface OhlcBarData {
+  tradeDate: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number | null
+}
+
+export async function getOhlcData(symbol?: string, limit?: number): Promise<{ bars: OhlcBarData[] }> {
+  const params = new URLSearchParams()
+  if (symbol) params.set("symbol", symbol)
+  if (limit) params.set("limit", String(limit))
+  return unwrap(await http.get(`/api/v1/admin/market-data/ohlc?${params.toString()}`))
+}
+
+// ── Formula Preview ──
+
+export interface FormulaPreviewResult {
+  valid: boolean
+  error?: string
+  dates: string[]
+  values: (number | null)[]
+}
+
+export async function previewFormula(
+  expression: string,
+  params?: Record<string, number>,
+): Promise<FormulaPreviewResult> {
+  return unwrap(await http.post("/api/v1/admin/indicator-configs/preview-formula", { expression, params }))
 }
 
 // ── News Digest ──

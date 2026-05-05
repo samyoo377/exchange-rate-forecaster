@@ -1,7 +1,9 @@
 import RssParser from "rss-parser"
 import axios from "axios"
+import * as cheerio from "cheerio"
 import { prisma } from "../../utils/db.js"
 import type { NewsSource as NewsSourceRow } from "@prisma/client"
+import { parseCurlCommand } from "./curlParser.js"
 
 const rssParser = new RssParser({ timeout: 15_000 })
 
@@ -166,6 +168,167 @@ async function fetchJsonApiSource(source: NewsSourceRow): Promise<{ items: RawNe
   return { items, responseBody, status }
 }
 
+interface HeadlessBrowserConfig {
+  itemSelector: string
+  titleSelector: string
+  urlSelector: string
+  summarySelector?: string
+  waitSelector?: string
+  token?: string
+  tokenHeader?: string
+  headers?: Record<string, string>
+}
+
+interface CurlConfig {
+  curlCommand?: string
+  method?: string
+  headers?: Record<string, string>
+  body?: string
+  parseType?: "json-api" | "rss" | "html"
+  itemSelector?: string
+  titleSelector?: string
+  urlSelector?: string
+  summarySelector?: string
+  jsonPath?: string
+  tokenExpiresAt?: string
+}
+
+function getParseConfig<T>(source: NewsSourceRow): T | null {
+  if (!source.parseConfig) return null
+  try { return JSON.parse(source.parseConfig) as T } catch { return null }
+}
+
+function extractItemsFromHtml(
+  html: string,
+  sourceName: string,
+  category: string,
+  baseUrl: string,
+  cfg: { itemSelector: string; titleSelector: string; urlSelector: string; summarySelector?: string },
+): RawNewsItem[] {
+  const $ = cheerio.load(html)
+  const items: RawNewsItem[] = []
+  $(cfg.itemSelector).each((_, el) => {
+    const $el = $(el)
+    const title = stripHtml($el.find(cfg.titleSelector).text()).slice(0, 200)
+    let url = $el.find(cfg.urlSelector).attr("href") ?? ""
+    if (url && !url.startsWith("http")) {
+      try { url = new URL(url, baseUrl).href } catch { /* keep relative */ }
+    }
+    const summary = cfg.summarySelector
+      ? stripHtml($el.find(cfg.summarySelector).text()).slice(0, 1000)
+      : undefined
+    if (title && url) items.push({ source: sourceName, title, url, summary, category })
+  })
+  return items.slice(0, 50)
+}
+
+async function fetchHeadlessBrowserSource(
+  source: NewsSourceRow,
+): Promise<{ items: RawNewsItem[]; responseBody?: string; status?: number }> {
+  const cfg = getParseConfig<HeadlessBrowserConfig>(source)
+  if (!cfg?.itemSelector || !cfg?.titleSelector || !cfg?.urlSelector) {
+    throw new Error("headless-browser 类型需要配置 itemSelector, titleSelector, urlSelector")
+  }
+  const headers: Record<string, string> = {
+    ...JSON_API_HEADERS,
+    ...cfg.headers,
+  }
+  if (cfg.token) {
+    headers[cfg.tokenHeader ?? "Authorization"] = cfg.token
+  }
+  const { data: html, status } = await axios.get(source.url, {
+    timeout: 30_000,
+    headers,
+    responseType: "text",
+  })
+  const items = extractItemsFromHtml(html, source.name, source.category, source.url, cfg)
+  return { items, responseBody: truncate(html, 10_000), status }
+}
+
+async function fetchCurlSource(
+  source: NewsSourceRow,
+): Promise<{ items: RawNewsItem[]; responseBody?: string; status?: number; tokenExpired?: boolean }> {
+  const cfg = getParseConfig<CurlConfig>(source)
+
+  let tokenExpired = false
+  if (cfg?.tokenExpiresAt) {
+    const expiry = new Date(cfg.tokenExpiresAt)
+    if (expiry.getTime() < Date.now()) {
+      tokenExpired = true
+      await prisma.newsSource.update({
+        where: { id: source.id },
+        data: { lastError: `Token 已过期 (${expiry.toLocaleDateString("zh-CN")})，请更新` },
+      }).catch(() => {})
+    }
+  }
+
+  let url: string
+  let method: string
+  let headers: Record<string, string>
+  let body: string | undefined
+
+  if (cfg?.curlCommand) {
+    const parsed = parseCurlCommand(cfg.curlCommand)
+    url = parsed.url
+    method = parsed.method
+    headers = { ...JSON_API_HEADERS, ...parsed.headers }
+    body = parsed.body
+  } else if (cfg?.method) {
+    url = source.url
+    method = cfg.method.toUpperCase()
+    headers = { ...JSON_API_HEADERS, ...cfg.headers }
+    body = cfg.body
+  } else {
+    url = source.url
+    method = "GET"
+    headers = { ...JSON_API_HEADERS, ...cfg?.headers }
+    body = undefined
+  }
+
+  const resp = await axios({
+    url, method, headers, timeout: 15_000,
+    data: body,
+    responseType: cfg?.parseType === "html" ? "text" : "json",
+  })
+
+  const responseBody = truncate(
+    typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data),
+    10_000,
+  )
+
+  let items: RawNewsItem[]
+
+  if (cfg?.parseType === "html" && cfg.itemSelector && cfg.titleSelector && cfg.urlSelector) {
+    items = extractItemsFromHtml(resp.data, source.name, source.category, url, {
+      itemSelector: cfg.itemSelector, titleSelector: cfg.titleSelector,
+      urlSelector: cfg.urlSelector, summarySelector: cfg.summarySelector,
+    })
+  } else if (cfg?.parseType === "rss" && typeof resp.data === "string") {
+    const feed = await rssParser.parseString(resp.data)
+    items = parseRssFeed(source.name, source.category, feed)
+  } else {
+    let data = resp.data
+    if (cfg?.jsonPath) {
+      for (const key of cfg.jsonPath.split(".")) {
+        data = data?.[key]
+      }
+    }
+    const arr = Array.isArray(data) ? data : (data?.data?.list ?? data?.data ?? data?.items ?? [])
+    const list = Array.isArray(arr) ? arr : []
+    items = list.slice(0, 50).map((item: any) => ({
+      source: source.name,
+      title: stripHtml(String(item.title ?? item.headline ?? "")).slice(0, 200),
+      url: String(item.url ?? item.link ?? ""),
+      summary: stripHtml(String(item.summary ?? item.description ?? item.content ?? "")).slice(0, 1000),
+      publishedAt: item.publishedAt || item.pubDate || item.ctime
+        ? new Date(typeof item.ctime === "number" ? item.ctime * 1000 : (item.publishedAt || item.pubDate))
+        : undefined,
+      category: source.category,
+    }))
+  }
+  return { items, responseBody, status: resp.status, tokenExpired }
+}
+
 async function fetchSingleSource(source: NewsSourceRow): Promise<RawNewsItem[]> {
   const startedAt = new Date()
   let logData: {
@@ -198,6 +361,17 @@ async function fetchSingleSource(source: NewsSourceRow): Promise<RawNewsItem[]> 
       items = result.items
       logData.responseBody = truncate(result.responseBody, 10_000)
       logData.responseStatus = 200
+    } else if (source.type === "headless-browser") {
+      const result = await fetchHeadlessBrowserSource(source)
+      items = result.items
+      logData.responseBody = truncate(result.responseBody, 10_000)
+      logData.responseStatus = result.status
+    } else if (source.type === "curl") {
+      const result = await fetchCurlSource(source)
+      items = result.items
+      logData.responseBody = truncate(result.responseBody, 10_000)
+      logData.responseStatus = result.status
+      logData.requestMethod = getParseConfig<CurlConfig>(source)?.curlCommand ? "CURL" : (getParseConfig<CurlConfig>(source)?.method ?? "GET")
     } else {
       const result = await fetchJsonApiSource(source)
       items = result.items

@@ -2,13 +2,14 @@ import type { FastifyInstance } from "fastify"
 import { Prisma } from "@prisma/client"
 import { prisma } from "../utils/db.js"
 import { ok, err } from "../utils/helpers.js"
-import { getCronStatus } from "../services/news/index.js"
+import { getCronStatus, requestAbort, resetCronTimer } from "../services/news/index.js"
 import { fetchAllNews } from "../services/news/newsFetcher.js"
 import { testFetchSource } from "../services/news/newsFetcher.js"
 import { digestRecentNews } from "../services/news/newsDigester.js"
 import { streamAdminChat, executeAdminQuery, getAdminModels } from "../services/ai/adminAssistant.js"
 import { invalidateConfigCache } from "../services/indicators/configService.js"
-import { validateFormula } from "../services/indicators/formulaEvaluator.js"
+import { validateFormula, evaluateFormula } from "../services/indicators/formulaEvaluator.js"
+import { getLatestBars } from "../services/dashboard/dashboardService.js"
 import {
   createSession, listSessions, getSessionWithMessages,
   deleteSession, addMessage, generateSessionTitle, getSessionHistory,
@@ -130,6 +131,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
           },
         }).catch(() => {})
       }
+      resetCronTimer("news_fetch")
       return ok({ triggered: true, fetchedCount: count })
     } catch (e) {
       if (taskLog) {
@@ -168,6 +170,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
           },
         }).catch(() => {})
       }
+      resetCronTimer("news_digest")
       return ok({ triggered: true, result })
     } catch (e) {
       if (taskLog) {
@@ -182,6 +185,90 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       }
       return err(500, (e as Error).message)
     }
+  })
+
+  // ── Abort running task ──
+  app.post<{ Params: { taskType: string } }>("/api/v1/admin/cron/abort/:taskType", async (req) => {
+    const { taskType } = req.params
+    const aborted = requestAbort(taskType)
+    if (aborted) {
+      const running = await prisma.taskRunLog.findFirst({
+        where: { taskType, status: "running" },
+        orderBy: { startedAt: "desc" },
+      })
+      if (running) {
+        await prisma.taskRunLog.update({
+          where: { id: running.id },
+          data: { status: "aborted", finishedAt: new Date(), errorMessage: "用户手动中断" },
+        }).catch(() => {})
+      }
+    }
+    return ok({ aborted })
+  })
+
+  // ── Digest execution logs (enriched with digest details) ──
+  app.get("/api/v1/admin/digest-logs", async (req) => {
+    const query = req.query as { page?: string; pageSize?: string }
+    const take = Math.min(50, parseInt(query.pageSize ?? "20"))
+    const skip = (Math.max(1, parseInt(query.page ?? "1")) - 1) * take
+
+    const [logs, total] = await Promise.all([
+      prisma.taskRunLog.findMany({
+        where: { taskType: "news_digest" },
+        orderBy: { startedAt: "desc" },
+        take,
+        skip,
+      }),
+      prisma.taskRunLog.count({ where: { taskType: "news_digest" } }),
+    ])
+
+    const enriched = await Promise.all(
+      logs.map(async (log) => {
+        let digest = null
+        if (log.outputRef) {
+          try {
+            const output = JSON.parse(log.outputRef)
+            if (output.digestId) {
+              const d = await prisma.newsDigest.findUnique({ where: { id: output.digestId } })
+              if (d) {
+                const rawItemIds: string[] = JSON.parse(d.rawItemIds)
+                const rawItems = rawItemIds.length > 0
+                  ? await prisma.newsRawItem.findMany({
+                      where: { id: { in: rawItemIds.slice(0, 50) } },
+                      orderBy: { fetchedAt: "desc" },
+                      select: { id: true, source: true, title: true, url: true, summary: true, publishedAt: true, category: true },
+                    })
+                  : []
+                digest = {
+                  id: d.id,
+                  headline: d.headline,
+                  summary: d.summary,
+                  sentiment: d.sentiment,
+                  keyFactors: JSON.parse(d.keyFactors),
+                  modelVersion: d.modelVersion,
+                  rawItems,
+                  rawItemCount: rawItemIds.length,
+                }
+              }
+            }
+          } catch {}
+        }
+        return {
+          id: log.id,
+          status: log.status,
+          startedAt: log.startedAt,
+          finishedAt: log.finishedAt,
+          errorMessage: log.errorMessage,
+          inputRef: log.inputRef,
+          durationMs: log.finishedAt
+            ? log.finishedAt.getTime() - log.startedAt.getTime()
+            : null,
+          digest,
+        }
+      }),
+    )
+
+    return ok({ rows: enriched, total, take, skip })
   })
 
   // ── Table list with counts ──
@@ -499,6 +586,54 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     } catch (e) {
       reply.status(500)
       return err(500, (e as Error).message)
+    }
+  })
+
+  // ── OHLC market data for admin charts ──
+  app.get("/api/v1/admin/market-data/ohlc", async (req) => {
+    const query = req.query as { symbol?: string; limit?: string }
+    const symbol = query.symbol ?? process.env.DEFAULT_SYMBOL ?? "USDCNH"
+    const limit = Math.min(200, Math.max(10, parseInt(query.limit ?? "60")))
+    const bars = await getLatestBars(symbol, limit)
+    return ok({
+      bars: bars.map((b) => ({
+        tradeDate: b.tradeDate.toISOString().slice(0, 10),
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close,
+        volume: b.volume ?? null,
+      })),
+    })
+  })
+
+  // ── Formula preview (evaluate expression against real data) ──
+  app.post("/api/v1/admin/indicator-configs/preview-formula", async (req, reply) => {
+    const { expression, params } = req.body as {
+      expression: string
+      params?: Record<string, number>
+    }
+    if (!expression?.trim()) {
+      reply.status(400)
+      return err(400, "expression is required")
+    }
+    const validation = validateFormula(expression)
+    if (!validation.valid) {
+      return ok({ valid: false, error: validation.error, dates: [], values: [] })
+    }
+    try {
+      const bars = await getLatestBars(
+        (process.env.DEFAULT_SYMBOL ?? "USDCNH"),
+        60,
+      )
+      if (bars.length === 0) {
+        return ok({ valid: true, dates: [], values: [], error: "暂无行情数据" })
+      }
+      const values = evaluateFormula(expression, bars, params ?? {})
+      const dates = bars.map((b) => b.tradeDate.toISOString().slice(0, 10))
+      return ok({ valid: true, dates, values })
+    } catch (e) {
+      return ok({ valid: false, error: (e as Error).message, dates: [], values: [] })
     }
   })
 

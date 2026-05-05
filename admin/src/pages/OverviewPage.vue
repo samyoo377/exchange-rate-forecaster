@@ -265,13 +265,13 @@
     </el-dialog>
 
     <!-- Server Info -->
-    <h3 class="section-title">服务状态</h3>
+    <!-- <h3 class="section-title">服务状态</h3>
     <el-descriptions :column="3" border size="small" class="section">
       <el-descriptions-item label="服务运行时间">{{ formatUptime(serverUptime) }}</el-descriptions-item>
       <el-descriptions-item label="数据刷新">
         <el-button size="small" type="primary" text @click="refresh">刷新数据</el-button>
       </el-descriptions-item>
-    </el-descriptions>
+    </el-descriptions> -->
   </div>
 </template>
 
