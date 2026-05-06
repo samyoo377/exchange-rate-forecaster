@@ -47,7 +47,7 @@
 
 | Cron 任务 | 频率 | 功能 |
 |-----------|------|------|
-| 新闻抓取 | 每 1 分钟 | 调用 `fetchAllNews()` 从各源拉取最新新闻 |
+| 新闻抓取 | 每 5 分钟 | 调用 `fetchAllNews()` 从各源拉取最新新闻 |
 | 新闻消化 | 每 30 分钟 | 调用 `digestRecentNews()` 用 GPT-5.4 生成摘要 |
 
 - 服务启动时自动注册（`app.ts` 中调用 `startNewsCronJobs()`）
