@@ -46,17 +46,21 @@ model InsightSummary {
 }
 
 model PredictionResult {
-  id               String   @id @default(cuid())
-  symbol           String
-  userQuery        String   @db.Text
-  horizon          String
-  direction        String
-  confidence       Float
-  rationale        String   @db.Text
-  riskNotes        String   @db.Text
-  modelVersion     String
-  dataSnapshotRefs String   @db.Text
-  createdAt        DateTime @default(now())
+  id                 String   @id @default(cuid())
+  symbol             String
+  userQuery          String   @db.Text
+  horizon            String
+  direction          String
+  confidence         Float
+  rationale          String   @db.Text
+  riskNotes          String   @db.Text
+  modelVersion       String
+  dataSnapshotRefs   String   @db.Text
+  signalsSnapshot    String?  @db.Text
+  indicatorsSnapshot String?  @db.Text
+  createdAt          DateTime @default(now())
+
+  @@index([symbol, createdAt])
 }
 
 model TaskRunLog {
@@ -175,17 +179,41 @@ model NewsFetchLog {
 
 // ── Feature 3: Indicator Configuration ──
 
+model IndicatorGroup {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  displayName String
+  description String?  @db.Text
+  sortOrder   Int      @default(0)
+  icon        String?
+  color       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  indicators  IndicatorConfig[]
+}
+
 model IndicatorConfig {
-  id               String   @id @default(cuid())
-  indicatorType    String   @unique // RSI | STOCH | CCI | ADX | AO | MOM | custom-*
-  displayName      String
-  description      String?  @db.Text
-  formulaLatex     String?  @db.Text
-  formulaExpression String?  @db.Text // mathjs-compatible expression for custom indicators
-  params           String   @db.Text // JSON: {"period": 14}
-  signalThresholds String   @db.Text // JSON: {"buyBelow": 30, "sellAbove": 70}
-  enabled          Boolean  @default(true)
-  weight           Float    @default(1.0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                String   @id @default(cuid())
+  indicatorType     String   @unique
+  displayName       String
+  description       String?  @db.Text
+  category1         String   @default("custom")
+  category2         String?
+  category3         String?
+  groupId           String?
+  group             IndicatorGroup? @relation(fields: [groupId], references: [id])
+  formulaLatex      String?  @db.Text
+  formulaExpression String?  @db.Text
+  stepFormulas      String?  @db.Text
+  params            String   @db.Text
+  signalThresholds  String   @db.Text
+  enabled           Boolean  @default(true)
+  weight            Float    @default(1.0)
+  chartType         String   @default("line")
+  subChart          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([category1, category2])
+  @@index([groupId])
 }

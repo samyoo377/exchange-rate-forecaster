@@ -7,6 +7,7 @@ import fastifyStatic from "@fastify/static"
 import { registerRoutes } from "./routes/index.js"
 import { registerAdminRoutes } from "./routes/admin.js"
 import { startNewsCronJobs } from "./services/news/index.js"
+import { migrateIndicatorCategories } from "./services/migrateIndicatorCategories.js"
 import { getUploadsDir } from "./services/file/fileService.js"
 
 const app = Fastify({ logger: true })
@@ -43,6 +44,7 @@ const host = process.env.HOST ?? "0.0.0.0"
 try {
   await app.listen({ port, host })
   console.log(`🚀 Server running at http://localhost:${port}`)
+  await migrateIndicatorCategories()
   startNewsCronJobs()
 } catch (err) {
   app.log.error(err)

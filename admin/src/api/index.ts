@@ -256,6 +256,40 @@ export async function testNewsSource(id: string): Promise<any> {
   return unwrap(await http.post(`/api/v1/admin/news-sources/${id}/test`))
 }
 
+// ── Indicator Groups ──
+
+export interface IndicatorGroup {
+  id: string
+  name: string
+  displayName: string
+  description: string | null
+  sortOrder: number
+  icon: string | null
+  color: string | null
+  createdAt: string
+  updatedAt: string
+  _count: { indicators: number }
+}
+
+export async function getIndicatorGroups(): Promise<IndicatorGroup[]> {
+  return unwrap(await http.get("/api/v1/admin/indicator-groups"))
+}
+
+export async function createIndicatorGroup(data: {
+  name: string; displayName: string; description?: string
+  sortOrder?: number; icon?: string; color?: string
+}): Promise<IndicatorGroup> {
+  return unwrap(await http.post("/api/v1/admin/indicator-groups", data))
+}
+
+export async function updateIndicatorGroup(id: string, data: Record<string, any>): Promise<IndicatorGroup> {
+  return unwrap(await http.put(`/api/v1/admin/indicator-groups/${id}`, data))
+}
+
+export async function deleteIndicatorGroup(id: string): Promise<any> {
+  return unwrap(await http.delete(`/api/v1/admin/indicator-groups/${id}`))
+}
+
 // ── Indicator Configs ──
 
 export async function getIndicatorConfigs(): Promise<any[]> {
@@ -308,8 +342,53 @@ export interface FormulaPreviewResult {
 export async function previewFormula(
   expression: string,
   params?: Record<string, number>,
+  timeframe?: string,
 ): Promise<FormulaPreviewResult> {
-  return unwrap(await http.post("/api/v1/admin/indicator-configs/preview-formula", { expression, params }))
+  return unwrap(await http.post("/api/v1/admin/indicator-configs/preview-formula", { expression, params, timeframe }))
+}
+
+// ── Step Formula Validation ──
+
+export interface StepFormulaValidation {
+  valid: boolean
+  errors: { step: number; variable: string; error: string }[]
+}
+
+export async function validateStepFormulas(
+  steps: { variable: string; label: string; expression: string; description?: string }[],
+  params?: Record<string, number>,
+): Promise<StepFormulaValidation> {
+  return unwrap(await http.post("/api/v1/admin/indicator-configs/validate-step-formulas", { steps, params }))
+}
+
+// ── Indicator Categories ──
+
+export interface CategoryNode {
+  category1: string
+  children: { category2: string; children: string[] }[]
+}
+
+export async function getIndicatorCategories(): Promise<CategoryNode[]> {
+  return unwrap(await http.get("/api/v1/admin/indicator-categories"))
+}
+
+// ── Cron Latest Output ──
+
+export async function getLatestCronOutput(taskType: string): Promise<any> {
+  return unwrap(await http.get(`/api/v1/admin/cron/latest-output/${taskType}`))
+}
+
+// ── Predictions ──
+
+export async function getPredictionsTimeline(symbol?: string, limit?: number): Promise<any[]> {
+  const params = new URLSearchParams()
+  if (symbol) params.set("symbol", symbol)
+  if (limit) params.set("limit", String(limit))
+  return unwrap(await http.get(`/api/v1/admin/predictions/timeline?${params.toString()}`))
+}
+
+export async function getPredictionDetail(id: string): Promise<any> {
+  return unwrap(await http.get(`/api/v1/admin/predictions/${id}`))
 }
 
 // ── News Digest ──

@@ -427,24 +427,91 @@ async function fetchSingleSource(source: NewsSourceRow): Promise<RawNewsItem[]> 
   }
 }
 
-export async function fetchAllNews(): Promise<number> {
+export interface FetchedItemSummary {
+  title: string
+  url: string
+  publishedAt: string | null
+  category: string | null
+  isNew: boolean
+}
+
+export interface FetchSourceDetail {
+  sourceName: string
+  sourceId: string
+  sourceType: string
+  status: "success" | "error" | "skipped"
+  itemCount: number
+  insertedCount: number
+  durationMs: number
+  error?: string
+  items: FetchedItemSummary[]
+}
+
+export interface NewsFetchOutput {
+  fetchedCount: number
+  totalSources: number
+  totalItemsRaw: number
+  durationMs: number
+  fetchList: FetchSourceDetail[]
+}
+
+export async function fetchAllNews(): Promise<NewsFetchOutput> {
+  const t0 = Date.now()
   const sources = await prisma.newsSource.findMany({ where: { enabled: true } })
+
   if (sources.length === 0) {
-    console.log("[NewsFetcher] No enabled sources")
-    return 0
+    return { fetchedCount: 0, totalSources: 0, totalItemsRaw: 0, durationMs: 0, fetchList: [] }
   }
 
   const results = await Promise.allSettled(sources.map(fetchSingleSource))
-  const allItems: RawNewsItem[] = []
-  for (const result of results) {
-    if (result.status === "fulfilled") allItems.push(...result.value)
+
+  const fetchList: FetchSourceDetail[] = []
+  const allItems: { item: RawNewsItem; sourceIdx: number }[] = []
+
+  for (let idx = 0; idx < results.length; idx++) {
+    const result = results[idx]
+    const source = sources[idx]
+    if (result.status === "fulfilled") {
+      const items = result.value
+      for (const item of items) allItems.push({ item, sourceIdx: idx })
+      fetchList.push({
+        sourceName: source.name,
+        sourceId: source.id,
+        sourceType: source.type,
+        status: items.length >= 0 ? "success" : "error",
+        itemCount: items.length,
+        insertedCount: 0,
+        durationMs: 0,
+        items: items.map((it) => ({
+          title: it.title,
+          url: it.url,
+          publishedAt: it.publishedAt?.toISOString() ?? null,
+          category: it.category ?? null,
+          isNew: false,
+        })),
+      })
+    } else {
+      fetchList.push({
+        sourceName: source.name,
+        sourceId: source.id,
+        sourceType: source.type,
+        status: "error",
+        itemCount: 0,
+        insertedCount: 0,
+        durationMs: 0,
+        error: result.reason?.message ?? "Unknown error",
+        items: [],
+      })
+    }
   }
 
-  const validItems = allItems.filter((item) => item.title && item.url)
-  let insertedCount = 0
+  const validItems = allItems.filter(({ item }) => item.title && item.url)
+  let totalInserted = 0
+  const insertedUrls = new Set<string>()
 
-  for (const item of validItems) {
+  for (const { item } of validItems) {
     try {
+      const existing = await prisma.newsRawItem.findUnique({ where: { url: item.url } })
       await prisma.newsRawItem.upsert({
         where: { url: item.url },
         update: {},
@@ -457,14 +524,35 @@ export async function fetchAllNews(): Promise<number> {
           category: item.category,
         },
       })
-      insertedCount++
+      if (!existing) {
+        insertedUrls.add(item.url)
+        totalInserted++
+      }
     } catch {
       // duplicate or DB error — skip
     }
   }
 
-  console.log(`[NewsFetcher] ${sources.length} sources → ${validItems.length} items → ${insertedCount} upserted`)
-  return insertedCount
+  for (const detail of fetchList) {
+    let srcInserted = 0
+    for (const it of detail.items) {
+      if (insertedUrls.has(it.url)) {
+        it.isNew = true
+        srcInserted++
+      }
+    }
+    detail.insertedCount = srcInserted
+  }
+
+  const totalDuration = Date.now() - t0
+
+  return {
+    fetchedCount: totalInserted,
+    totalSources: sources.length,
+    totalItemsRaw: validItems.length,
+    durationMs: totalDuration,
+    fetchList,
+  }
 }
 
 export async function testFetchSource(sourceId: string): Promise<{ count: number; error?: string }> {

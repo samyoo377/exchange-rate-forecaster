@@ -79,7 +79,85 @@
       </template>
       <template #startedAt="{ row }">{{ formatTime(row.startedAt) }}</template>
       <template #finishedAt="{ row }">{{ formatTime(row.finishedAt) }}</template>
+      <template #_action="{ row }">
+        <el-button v-if="row.taskType === 'news_fetch' && row.outputRef" size="small" text type="primary" @click="showFetchOutput(row)">
+          抓取详情
+        </el-button>
+      </template>
     </FilterableTable>
+
+    <!-- Fetch Output Dialog (fetchList) -->
+    <el-dialog v-model="fetchOutputVisible" title="新闻抓取详情" width="900px" destroy-on-close>
+      <template v-if="fetchOutputData">
+        <el-row :gutter="12" class="fetch-summary-row">
+          <el-col :span="6">
+            <div class="summary-card"><div class="sv">{{ fetchOutputData.totalSources }}</div><div class="sl">数据源总数</div></div>
+          </el-col>
+          <el-col :span="6">
+            <div class="summary-card"><div class="sv">{{ fetchOutputData.totalItemsRaw }}</div><div class="sl">抓取条数</div></div>
+          </el-col>
+          <el-col :span="6">
+            <div class="summary-card"><div class="sv highlight">{{ fetchOutputData.fetchedCount }}</div><div class="sl">新增入库</div></div>
+          </el-col>
+          <el-col :span="6">
+            <div class="summary-card"><div class="sv">{{ fetchOutputData.durationMs }}ms</div><div class="sl">总耗时</div></div>
+          </el-col>
+        </el-row>
+
+        <el-table :data="fetchOutputData.fetchList" border stripe size="small" style="margin-top:12px" row-key="sourceId">
+          <el-table-column prop="sourceName" label="数据源" width="150" />
+          <el-table-column prop="sourceType" label="类型" width="90" align="center" />
+          <el-table-column label="状态" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.status === 'success' ? 'success' : row.status === 'skipped' ? 'info' : 'danger'" size="small">
+                {{ row.status }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="itemCount" label="抓取" width="70" align="center" />
+          <el-table-column label="新增" width="70" align="center">
+            <template #default="{ row }">
+              <span :class="{ highlight: row.insertedCount > 0 }">{{ row.insertedCount }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="错误" min-width="150">
+            <template #default="{ row }">
+              <el-text v-if="row.error" type="danger" size="small">{{ row.error }}</el-text>
+              <span v-else class="no-data">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="新闻列表" width="100" align="center">
+            <template #default="{ row }">
+              <el-button v-if="row.items?.length" size="small" text type="primary" @click="showSourceItems(row)">
+                {{ row.items.length }} 条
+              </el-button>
+              <span v-else class="no-data">-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+    </el-dialog>
+
+    <!-- Source Items Dialog -->
+    <el-dialog v-model="sourceItemsVisible" :title="sourceItemsTitle" width="800px" destroy-on-close>
+      <el-table :data="sourceItemsList" border stripe size="small" max-height="500">
+        <el-table-column label="新增" width="60" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.isNew" type="success" size="small" effect="dark">NEW</el-tag>
+            <span v-else class="no-data">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="title" label="标题" min-width="250">
+          <template #default="{ row }">
+            <a :href="row.url" target="_blank" rel="noopener" class="news-title">{{ row.title }}</a>
+          </template>
+        </el-table-column>
+        <el-table-column prop="category" label="分类" width="90" />
+        <el-table-column label="发布时间" width="170">
+          <template #default="{ row }">{{ row.publishedAt ? formatTime(row.publishedAt) : '-' }}</template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
 
 
 
@@ -269,6 +347,13 @@ const fetchLogRef = ref<InstanceType<typeof FilterableTable> | null>(null)
 const detailVisible = ref(false)
 const detailRow = ref<any>(null)
 
+// Fetch output dialog state
+const fetchOutputVisible = ref(false)
+const fetchOutputData = ref<any>(null)
+const sourceItemsVisible = ref(false)
+const sourceItemsTitle = ref("")
+const sourceItemsList = ref<any[]>([])
+
 // Digest logs state
 const digestLogs = ref<DigestLogEntry[]>([])
 const digestLogsLoading = ref(false)
@@ -289,6 +374,7 @@ const taskLogColumns: ColumnDef[] = [
   { prop: "startedAt", label: "开始", width: 180 },
   { prop: "finishedAt", label: "结束", width: 180 },
   { prop: "errorMessage", label: "错误" },
+  { prop: "_action", label: "操作", width: 110, align: "center", filterable: false, sortable: false },
 ]
 
 const fetchLogColumns: ColumnDef[] = [
@@ -346,6 +432,21 @@ function formatTime(t: string | null): string {
 function showFetchDetail(row: any) {
   detailRow.value = row
   detailVisible.value = true
+}
+
+function showFetchOutput(row: any) {
+  try {
+    fetchOutputData.value = JSON.parse(row.outputRef)
+    fetchOutputVisible.value = true
+  } catch {
+    ElMessage.warning("无法解析抓取结果")
+  }
+}
+
+function showSourceItems(sourceDetail: any) {
+  sourceItemsTitle.value = `${sourceDetail.sourceName} - 新闻列表`
+  sourceItemsList.value = sourceDetail.items ?? []
+  sourceItemsVisible.value = true
 }
 
 // Digest log helpers
@@ -597,7 +698,9 @@ onUnmounted(() => {
 }
 
 /* Digest detail dialog */
-.detail-section {}
+.detail-section {
+  margin-bottom: 4px;
+}
 
 .detail-header {
   display: flex;
@@ -738,5 +841,38 @@ onUnmounted(() => {
   font-size: 12px;
   color: #909399;
   font-family: monospace;
+}
+
+/* Fetch output summary */
+.fetch-summary-row {
+  margin-bottom: 4px;
+}
+
+.summary-card {
+  text-align: center;
+  background: #f5f7fa;
+  border-radius: 8px;
+  padding: 12px 8px;
+}
+
+.summary-card .sv {
+  font-size: 22px;
+  font-weight: 700;
+  color: #303133;
+}
+
+.summary-card .sv.highlight {
+  color: #67c23a;
+}
+
+.summary-card .sl {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 2px;
+}
+
+.highlight {
+  color: #67c23a;
+  font-weight: 600;
 }
 </style>

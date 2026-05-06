@@ -111,7 +111,7 @@ export function startNewsCronJobs() {
       },
     }).catch(() => null)
     try {
-      const count = await fetchAllNews()
+      const result = await fetchAllNews()
       fetchStatus.lastResult = "success"
       if (taskLog) {
         await prisma.taskRunLog.update({
@@ -119,7 +119,7 @@ export function startNewsCronJobs() {
           data: {
             status: "success",
             finishedAt: new Date(),
-            outputRef: JSON.stringify({ fetchedCount: count }),
+            outputRef: JSON.stringify(result),
           },
         }).catch(() => {})
       }
@@ -183,7 +183,7 @@ function createFetchSchedule() {
       },
     }).catch(() => null)
     try {
-      const count = await fetchAllNews()
+      const result = await fetchAllNews()
       if (abortFlags.news_fetch) {
         fetchStatus.lastResult = "error"
         fetchStatus.lastError = "已中断"
@@ -202,7 +202,7 @@ function createFetchSchedule() {
             data: {
               status: "success",
               finishedAt: new Date(),
-              outputRef: JSON.stringify({ fetchedCount: count }),
+              outputRef: JSON.stringify(result),
             },
           }).catch(() => {})
         }

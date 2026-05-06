@@ -221,12 +221,22 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.get("/api/v1/indicators/configs", async () => {
     const configs = await getIndicatorConfigs()
+    const groupIds = new Set<string>()
+    for (const [, config] of configs) {
+      if (config.groupId) groupIds.add(config.groupId)
+    }
+    const groups = groupIds.size > 0
+      ? await prisma.indicatorGroup.findMany({ where: { id: { in: [...groupIds] } } })
+      : []
+    const groupMap = new Map(groups.map((g) => [g.id, g]))
+
     const result = []
     for (const [type, config] of configs) {
       const isBuiltin = !!BUILTIN_DATA_KEYS[type]
       const dataKeys = isBuiltin
         ? BUILTIN_DATA_KEYS[type]
         : [type.toLowerCase().replace(/-/g, "_")]
+      const group = config.groupId ? groupMap.get(config.groupId) : null
       result.push({
         indicatorType: type,
         displayName: config.displayName,
@@ -235,7 +245,15 @@ export async function registerRoutes(app: FastifyInstance) {
         signalThresholds: JSON.parse(config.signalThresholds),
         dataKeys,
         isBuiltin,
-        chartType: type === "AO" ? "bar" : "line",
+        chartType: config.chartType ?? (type === "AO" ? "bar" : "line"),
+        subChart: config.subChart ?? true,
+        category1: config.category1 ?? "custom",
+        category2: config.category2,
+        category3: config.category3,
+        groupId: config.groupId,
+        groupName: group?.displayName ?? null,
+        groupColor: group?.color ?? null,
+        groupSortOrder: group?.sortOrder ?? 999,
       })
     }
     return ok(result)
@@ -378,18 +396,18 @@ export async function registerRoutes(app: FastifyInstance) {
       },
     }).catch(() => null)
     try {
-      const count = await fetchAllNews()
+      const result = await fetchAllNews()
       if (taskLog) {
         await prisma.taskRunLog.update({
           where: { id: taskLog.id },
           data: {
             status: "success",
             finishedAt: new Date(),
-            outputRef: JSON.stringify({ fetched: count }),
+            outputRef: JSON.stringify(result),
           },
         }).catch(() => {})
       }
-      return ok({ fetched: count })
+      return ok({ fetched: result.fetchedCount })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       if (taskLog) {
@@ -462,5 +480,43 @@ export async function registerRoutes(app: FastifyInstance) {
       reply.status(500)
       return err(50012, msg)
     }
+  })
+
+  // ── Predictions timeline (for Web AI prediction chart) ──
+  app.get("/api/v1/predictions/timeline", async (request) => {
+    const query = request.query as { symbol?: string; limit?: string }
+    const symbol = query.symbol ?? process.env.DEFAULT_SYMBOL ?? "USDCNH"
+    const limit = Math.min(100, Math.max(1, parseInt(query.limit ?? "30")))
+
+    const predictions = await prisma.predictionResult.findMany({
+      where: { symbol },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: {
+        id: true,
+        symbol: true,
+        direction: true,
+        confidence: true,
+        horizon: true,
+        createdAt: true,
+        modelVersion: true,
+        signalsSnapshot: true,
+        indicatorsSnapshot: true,
+        rationale: true,
+      },
+    })
+    return ok(predictions.reverse())
+  })
+
+  // ── Single prediction detail ──
+  app.get<{ Params: { id: string } }>("/api/v1/predictions/:id", async (request, reply) => {
+    const prediction = await prisma.predictionResult.findUnique({
+      where: { id: request.params.id },
+    })
+    if (!prediction) {
+      reply.status(404)
+      return err(40401, "Prediction not found")
+    }
+    return ok(prediction)
   })
 }

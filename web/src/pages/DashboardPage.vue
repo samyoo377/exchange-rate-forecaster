@@ -59,6 +59,11 @@
             <IndicatorCharts :series="marketStore.series" :configs="marketStore.indicatorConfigs" />
           </el-col>
         </el-row>
+        <el-row :gutter="12" style="margin-bottom:12px">
+          <el-col :span="24">
+            <PredictionChartPanel :series="marketStore.series" />
+          </el-col>
+        </el-row>
         <el-row :gutter="12">
           <el-col :xs="24" :md="16">
             <IndicatorCardGroup :indicators="marketStore.indicators" :configs="marketStore.indicatorConfigs" />
@@ -80,6 +85,7 @@ import MarketChart from "../components/MarketChart.vue"
 import IndicatorCharts from "../components/IndicatorCharts.vue"
 import IndicatorCardGroup from "../components/IndicatorCardGroup.vue"
 import PredictionCard from "../components/PredictionCard.vue"
+import PredictionChartPanel from "../components/PredictionChartPanel.vue"
 import MarketSummaryBar from "../components/MarketSummaryBar.vue"
 import { ElMessage } from "element-plus"
 import { computed } from "vue"

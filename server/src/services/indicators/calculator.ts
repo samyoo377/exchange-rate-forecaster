@@ -1,6 +1,6 @@
 import type { OhlcBar, IndicatorValues } from "../../types/index.js"
 import { getIndicatorConfigs } from "./configService.js"
-import { evaluateFormula } from "./formulaEvaluator.js"
+import { evaluateFormula, evaluateStepFormulas, type StepFormula } from "./formulaEvaluator.js"
 
 function sma(arr: number[], period: number, end: number): number | null {
   if (end < period - 1) return null
@@ -236,12 +236,33 @@ export async function computeIndicatorSeriesFromConfig(bars: OhlcBar[]): Promise
   for (const [type, config] of configs) {
     if (BUILTIN_TYPES.has(type)) continue
     if (!config.enabled) continue
-    if (!config.formulaExpression) continue
+
+    const params = JSON.parse(config.params)
+    const key = type.toLowerCase().replace(/-/g, "_")
 
     try {
-      const params = JSON.parse(config.params)
-      const values = evaluateFormula(config.formulaExpression, bars, params)
-      const key = type.toLowerCase().replace(/-/g, "_")
+      let values: (number | null)[]
+
+      if (config.stepFormulas) {
+        const steps: StepFormula[] = JSON.parse(config.stepFormulas)
+        if (steps.length > 0) {
+          const { results, finalVariable } = evaluateStepFormulas(steps, bars, params)
+          values = results[finalVariable] ?? Array(bars.length).fill(null)
+          for (const [varName, varValues] of Object.entries(results)) {
+            const subKey = `${key}_${varName}`
+            for (let i = 0; i < bars.length; i++) {
+              ;(baseSeries[i] as any)[subKey] = varValues[i] ?? undefined
+            }
+          }
+        } else {
+          continue
+        }
+      } else if (config.formulaExpression) {
+        values = evaluateFormula(config.formulaExpression, bars, params)
+      } else {
+        continue
+      }
+
       for (let i = 0; i < bars.length; i++) {
         ;(baseSeries[i] as any)[key] = values[i] ?? undefined
       }

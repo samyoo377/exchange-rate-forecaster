@@ -175,6 +175,8 @@ export async function runPrediction(
       riskNotes: JSON.stringify(output.riskNotes),
       modelVersion: "rule-engine-v1",
       dataSnapshotRefs: JSON.stringify(sourceRefs),
+      signalsSnapshot: JSON.stringify(signals),
+      indicatorsSnapshot: JSON.stringify(ind),
     },
   })
 

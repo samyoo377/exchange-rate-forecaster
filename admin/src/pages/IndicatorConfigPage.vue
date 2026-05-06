@@ -13,6 +13,46 @@
       </div>
     </div>
 
+    <!-- ═══ Section 0: Indicator Groups ═══ -->
+    <el-card shadow="never" class="section-card">
+      <template #header>
+        <div class="section-header">
+          <span class="section-title">指标分组管理</span>
+          <el-button type="primary" size="small" @click="openGroupDialog()">
+            <el-icon><Plus /></el-icon> 新建分组
+          </el-button>
+        </div>
+      </template>
+      <el-table :data="groups" v-loading="groupsLoading" stripe border size="small" style="width:100%">
+        <el-table-column label="排序" prop="sortOrder" width="70" align="center" />
+        <el-table-column label="标识" prop="name" width="140" />
+        <el-table-column label="显示名称" width="160">
+          <template #default="{ row }">
+            <span v-if="row.color" class="group-dot" :style="{ background: row.color }" />
+            {{ row.displayName }}
+          </template>
+        </el-table-column>
+        <el-table-column label="描述" prop="description" min-width="200" show-overflow-tooltip />
+        <el-table-column label="指标数" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row._count.indicators > 0 ? 'primary' : 'info'">
+              {{ row._count.indicators }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="140" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" text @click="openGroupDialog(row)">
+              <el-icon><EditPen /></el-icon> 编辑
+            </el-button>
+            <el-button size="small" type="danger" text @click="confirmDeleteGroup(row)">
+              <el-icon><Delete /></el-icon>
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <!-- ═══ Section 1: OHLC Data Preview ═══ -->
     <el-card shadow="never" class="section-card">
       <template #header>
@@ -52,24 +92,27 @@
               </div>
             </div>
 
-            <!-- Quick-insert: series functions -->
+            <!-- Quick-insert: series functions with tooltips -->
             <div class="insert-group">
               <div class="insert-label">序列函数</div>
               <div class="chip-row">
-                <el-button v-for="f in seriesFns" :key="f.label"
-                  size="small" type="primary" plain @click="insertToFormula(f.template)">
-                  {{ f.label }}
-                </el-button>
+                <el-tooltip v-for="f in seriesFns" :key="f.label" :content="f.tooltip" placement="top" :show-after="200">
+                  <el-button size="small" type="primary" plain @click="insertToFormula(f.template)">
+                    {{ f.label }}
+                  </el-button>
+                </el-tooltip>
               </div>
             </div>
 
-            <!-- Quick-insert: math functions -->
+            <!-- Quick-insert: math functions with tooltips -->
             <div class="insert-group">
               <div class="insert-label">数学函数</div>
               <div class="chip-row">
-                <el-button v-for="f in mathFns" :key="f" size="small" plain @click="insertToFormula(f + '(')">
-                  {{ f }}
-                </el-button>
+                <el-tooltip v-for="f in mathFnDefs" :key="f.name" :content="f.tooltip" placement="top" :show-after="200">
+                  <el-button size="small" plain @click="insertToFormula(f.name + '(')">
+                    {{ f.name }}
+                  </el-button>
+                </el-tooltip>
               </div>
             </div>
 
@@ -118,7 +161,14 @@
         <!-- Right: Preview Chart -->
         <el-col :span="12">
           <div class="preview-panel">
-            <div class="preview-title">公式输出预览</div>
+            <div class="preview-header">
+              <span class="preview-title">公式输出预览</span>
+              <el-radio-group v-model="previewTimeframe" size="small" @change="onTimeframeChange">
+                <el-radio-button value="1h">小时线</el-radio-button>
+                <el-radio-button value="4h">半日线</el-radio-button>
+                <el-radio-button value="1d">日线</el-radio-button>
+              </el-radio-group>
+            </div>
             <div ref="previewChartRef" class="chart-box preview-chart" v-loading="previewLoading">
               <div v-if="!previewData && !previewLoading" class="preview-empty">
                 输入公式后点击"预览"查看计算结果
@@ -163,9 +213,26 @@
     <!-- ═══ Section 3: Indicator Table ═══ -->
     <el-card shadow="never" class="section-card">
       <template #header>
-        <span class="section-title">已配置指标</span>
+        <div class="section-header">
+          <span class="section-title">已配置指标</span>
+          <div class="filter-bar">
+            <el-select v-model="groupFilter" placeholder="分组筛选" clearable size="small" style="width:160px">
+              <el-option label="全部分组" value="" />
+              <el-option label="未分组" value="__ungrouped__" />
+              <el-option v-for="g in groups" :key="g.id" :label="g.displayName" :value="g.id" />
+            </el-select>
+            <el-select v-model="categoryFilter" placeholder="分类筛选" clearable size="small" style="width:160px">
+              <el-option label="全部" value="" />
+              <el-option label="趋势 (trend)" value="trend" />
+              <el-option label="动量 (momentum)" value="momentum" />
+              <el-option label="波动率 (volatility)" value="volatility" />
+              <el-option label="支撑阻力 (support_resist)" value="support_resist" />
+              <el-option label="自定义 (custom)" value="custom" />
+            </el-select>
+          </div>
+        </div>
       </template>
-      <el-table :data="configs" v-loading="tableLoading" stripe border size="small" style="width:100%">
+      <el-table :data="filteredConfigs" v-loading="tableLoading" stripe border size="small" style="width:100%">
         <el-table-column label="启用" width="70" align="center">
           <template #default="{ row }">
             <el-switch v-model="row.enabled" size="small" @change="toggleEnabled(row)" />
@@ -181,9 +248,27 @@
           </template>
         </el-table-column>
         <el-table-column label="名称" prop="displayName" width="140" />
-        <el-table-column label="计算表达式" min-width="220">
+        <el-table-column label="分组" width="120">
           <template #default="{ row }">
-            <el-tooltip v-if="row.formulaExpression" :content="row.formulaExpression" placement="top" :show-after="300">
+            <template v-if="row.group">
+              <span v-if="row.group.color" class="group-dot" :style="{ background: row.group.color }" />
+              {{ row.group.displayName }}
+            </template>
+            <span v-else class="no-formula">未分组</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="分类" width="160">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">{{ row.category1 ?? 'custom' }}</el-tag>
+            <el-tag v-if="row.category2" size="small" type="info" effect="plain" style="margin-left:2px">{{ row.category2 }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="计算表达式" min-width="180">
+          <template #default="{ row }">
+            <template v-if="row.stepFormulas">
+              <el-tag size="small" type="success" effect="plain">分步公式</el-tag>
+            </template>
+            <el-tooltip v-else-if="row.formulaExpression" :content="row.formulaExpression" placement="top" :show-after="300">
               <code class="formula-cell">{{ row.formulaExpression }}</code>
             </el-tooltip>
             <span v-else class="no-formula">内置算法</span>
@@ -203,6 +288,32 @@
       </el-table>
     </el-card>
 
+    <!-- ═══ Group Dialog ═══ -->
+    <el-dialog v-model="groupDialogVisible" :title="groupForm.id ? '编辑分组' : '新建分组'" width="480px"
+      :close-on-click-modal="false" destroy-on-close>
+      <el-form :model="groupForm" label-width="80px" label-position="left" size="small">
+        <el-form-item label="标识">
+          <el-input v-model="groupForm.name" placeholder="英文标识，如 momentum" :disabled="!!groupForm.id" />
+        </el-form-item>
+        <el-form-item label="显示名称">
+          <el-input v-model="groupForm.displayName" placeholder="如 动量指标" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="groupForm.description" type="textarea" :rows="2" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="排序">
+          <el-input-number v-model="groupForm.sortOrder" :min="0" :max="999" />
+        </el-form-item>
+        <el-form-item label="颜色">
+          <el-color-picker v-model="groupForm.color" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="groupDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveGroup" :loading="groupSaving">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ═══ Edit Dialog ═══ -->
     <el-dialog v-model="editDialogVisible" :title="`编辑指标: ${editForm.displayName}`" width="720px"
       :close-on-click-modal="false" destroy-on-close>
@@ -216,6 +327,56 @@
         <el-form-item label="描述">
           <el-input v-model="editForm.description" type="textarea" :rows="2" />
         </el-form-item>
+
+        <el-form-item label="所属分组">
+          <el-select v-model="editForm.groupId" placeholder="选择分组" clearable size="small" style="width:100%">
+            <el-option label="未分组" :value="null" />
+            <el-option v-for="g in groups" :key="g.id" :label="g.displayName" :value="g.id" />
+          </el-select>
+        </el-form-item>
+
+        <el-row :gutter="12">
+          <el-col :span="8">
+            <el-form-item label="一级分类" label-width="80px">
+              <el-select v-model="editForm.category1" size="small" style="width:100%">
+                <el-option label="趋势" value="trend" />
+                <el-option label="动量" value="momentum" />
+                <el-option label="波动率" value="volatility" />
+                <el-option label="支撑阻力" value="support_resist" />
+                <el-option label="自定义" value="custom" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="二级分类" label-width="80px">
+              <el-input v-model="editForm.category2" placeholder="如 oscillator" size="small" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="三级分类" label-width="80px">
+              <el-input v-model="editForm.category3" placeholder="可选" size="small" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row :gutter="12">
+          <el-col :span="12">
+            <el-form-item label="图表类型" label-width="110px">
+              <el-select v-model="editForm.chartType" size="small">
+                <el-option label="折线图" value="line" />
+                <el-option label="柱状图" value="bar" />
+                <el-option label="面积图" value="area" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="子图显示" label-width="110px">
+              <el-switch v-model="editForm.subChart" size="small" />
+              <span style="font-size:11px;color:#909399;margin-left:8px">{{ editForm.subChart ? '在独立子图中显示' : '叠加在主图上' }}</span>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
         <el-form-item label="LaTeX 公式">
           <el-input v-model="editForm.formulaLatex" type="textarea" :rows="2"
             placeholder="LaTeX 展示公式（可选）" />
@@ -231,6 +392,27 @@
           </div>
           <el-tag v-if="editFormulaError" type="danger" size="small" style="margin-top:4px">{{ editFormulaError }}</el-tag>
           <el-tag v-else-if="editForm.formulaExpression && editFormulaValid" type="success" size="small" style="margin-top:4px">公式有效</el-tag>
+        </el-form-item>
+
+        <!-- Step Formulas -->
+        <el-form-item v-if="!isBuiltin(editForm.indicatorType)" label="分步公式">
+          <div class="step-formulas-editor">
+            <div v-for="(step, idx) in editStepFormulas" :key="idx" class="step-row">
+              <span class="step-num">{{ idx + 1 }}</span>
+              <el-input v-model="step.variable" placeholder="变量名" size="small" style="width:100px" />
+              <el-input v-model="step.label" placeholder="标签" size="small" style="width:120px" />
+              <el-input v-model="step.expression" placeholder="表达式" size="small" style="flex:1" />
+              <el-button size="small" text type="danger" @click="editStepFormulas.splice(idx, 1)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
+            <el-button size="small" text type="primary" @click="editStepFormulas.push({ variable: '', label: '', expression: '' })">
+              + 添加步骤
+            </el-button>
+            <div v-if="editStepFormulas.length > 0" style="margin-top:4px">
+              <el-text size="small" type="info">每步结果可在后续步骤中引用，最后一步为最终输出</el-text>
+            </div>
+          </div>
         </el-form-item>
 
         <el-divider />
@@ -332,20 +514,114 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch, nextTick, onBeforeUnmount } from "vue"
+import { ref, reactive, computed, onMounted, watch, nextTick, onBeforeUnmount } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import * as echarts from "echarts"
 import {
   getIndicatorConfigs, updateIndicatorConfig,
   createIndicatorConfig, deleteIndicatorConfig, validateFormula,
   getOhlcData, previewFormula,
-  type OhlcBarData, type FormulaPreviewResult,
+  getIndicatorGroups, createIndicatorGroup, updateIndicatorGroup, deleteIndicatorGroup,
+  type OhlcBarData, type FormulaPreviewResult, type IndicatorGroup,
 } from "../api/index"
 import FormulaEditor from "../components/FormulaEditor.vue"
 import AiConfigHelper from "../components/AiConfigHelper.vue"
 
 const BUILTIN_TYPES = new Set(["RSI", "STOCH", "CCI", "ADX", "AO", "MOM"])
 function isBuiltin(type: string) { return BUILTIN_TYPES.has(type) }
+
+// ── Section 0: Indicator Groups ──
+const groups = ref<IndicatorGroup[]>([])
+const groupsLoading = ref(false)
+const groupDialogVisible = ref(false)
+const groupSaving = ref(false)
+const groupForm = reactive({
+  id: "",
+  name: "",
+  displayName: "",
+  description: "",
+  sortOrder: 0,
+  color: "",
+})
+
+async function loadGroups() {
+  groupsLoading.value = true
+  try {
+    groups.value = await getIndicatorGroups()
+  } finally {
+    groupsLoading.value = false
+  }
+}
+
+function openGroupDialog(row?: IndicatorGroup) {
+  if (row) {
+    groupForm.id = row.id
+    groupForm.name = row.name
+    groupForm.displayName = row.displayName
+    groupForm.description = row.description ?? ""
+    groupForm.sortOrder = row.sortOrder
+    groupForm.color = row.color ?? ""
+  } else {
+    groupForm.id = ""
+    groupForm.name = ""
+    groupForm.displayName = ""
+    groupForm.description = ""
+    groupForm.sortOrder = groups.value.length
+    groupForm.color = ""
+  }
+  groupDialogVisible.value = true
+}
+
+async function saveGroup() {
+  if (!groupForm.name || !groupForm.displayName) {
+    ElMessage.warning("标识和显示名称不能为空")
+    return
+  }
+  groupSaving.value = true
+  try {
+    const data = {
+      name: groupForm.name,
+      displayName: groupForm.displayName,
+      description: groupForm.description || undefined,
+      sortOrder: groupForm.sortOrder,
+      color: groupForm.color || undefined,
+    }
+    if (groupForm.id) {
+      await updateIndicatorGroup(groupForm.id, data)
+      ElMessage.success("分组已更新")
+    } else {
+      await createIndicatorGroup(data)
+      ElMessage.success("分组已创建")
+    }
+    groupDialogVisible.value = false
+    await loadGroups()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || e.message || "保存失败")
+  } finally {
+    groupSaving.value = false
+  }
+}
+
+async function confirmDeleteGroup(row: IndicatorGroup) {
+  if (row._count.indicators > 0) {
+    ElMessage.warning(`该分组下有 ${row._count.indicators} 个指标，请先调整分组后再删除`)
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定删除分组 "${row.displayName}" 吗？`,
+      "删除分组",
+      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" },
+    )
+    await deleteIndicatorGroup(row.id)
+    ElMessage.success("分组已删除")
+    await loadGroups()
+  } catch (e: any) {
+    if (e !== "cancel" && e?.toString() !== "cancel") {
+      ElMessage.error(e?.response?.data?.message || e.message || "删除失败")
+    }
+  }
+}
 
 // ── OHLC field definitions ──
 const ohlcFields = [
@@ -357,15 +633,26 @@ const ohlcFields = [
 ]
 
 const seriesFns = [
-  { label: "SMA", template: "sma(close, period)" },
-  { label: "EMA", template: "ema(close, period)" },
-  { label: "STDDEV", template: "stddev(close, period)" },
-  { label: "HIGHEST", template: "highest(high, period)" },
-  { label: "LOWEST", template: "lowest(low, period)" },
-  { label: "CHANGE", template: "change(close, 1)" },
+  { label: "SMA", template: "sma(close, period)", tooltip: "简单移动平均 — 对指定周期内的值取算术平均" },
+  { label: "EMA", template: "ema(close, period)", tooltip: "指数移动平均 — 近期数据权重更高的加权平均" },
+  { label: "STDDEV", template: "stddev(close, period)", tooltip: "标准差 — 衡量数据在指定周期内的离散程度" },
+  { label: "HIGHEST", template: "highest(high, period)", tooltip: "区间最高值 — 返回指定周期内的最大值" },
+  { label: "LOWEST", template: "lowest(low, period)", tooltip: "区间最低值 — 返回指定周期内的最小值" },
+  { label: "CHANGE", template: "change(close, 1)", tooltip: "变化量 — 当前值与 N 期前值的差" },
 ]
 
-const mathFns = ["abs", "sqrt", "log", "exp", "pow", "sin", "cos", "round", "max", "min"]
+const mathFnDefs = [
+  { name: "abs", tooltip: "绝对值 — 返回数值的非负值" },
+  { name: "sqrt", tooltip: "平方根 — 返回数值的算术平方根" },
+  { name: "log", tooltip: "自然对数 — 以 e 为底的对数" },
+  { name: "exp", tooltip: "指数函数 — 返回 e 的指定次幂" },
+  { name: "pow", tooltip: "幂运算 — pow(底数, 指数)" },
+  { name: "sin", tooltip: "正弦函数 — 三角函数 sin(x)" },
+  { name: "cos", tooltip: "余弦函数 — 三角函数 cos(x)" },
+  { name: "round", tooltip: "四舍五入 — 取最接近的整数" },
+  { name: "max", tooltip: "最大值 — 返回多个值中的最大值" },
+  { name: "min", tooltip: "最小值 — 返回多个值中的最小值" },
+]
 
 const operators = [
   { label: "+", value: " + " },
@@ -469,8 +756,13 @@ const formulaError = ref("")
 const previewLoading = ref(false)
 const previewData = ref<FormulaPreviewResult | null>(null)
 const previewChartRef = ref<HTMLElement | null>(null)
+const previewTimeframe = ref("1d")
 let previewChart: echarts.ECharts | null = null
 let cursorPos = 0
+
+function onTimeframeChange() {
+  if (formulaExpr.value.trim()) doPreview()
+}
 
 function saveCursorPos() {
   nextTick(() => {
@@ -515,7 +807,7 @@ async function doPreview() {
   if (!formulaExpr.value.trim()) return
   previewLoading.value = true
   try {
-    const result = await previewFormula(formulaExpr.value, safeParseJson(newForm.params))
+    const result = await previewFormula(formulaExpr.value, safeParseJson(newForm.params), previewTimeframe.value)
     previewData.value = result
     if (!result.valid) {
       formulaError.value = result.error ?? "公式无效"
@@ -622,14 +914,37 @@ interface IndicatorConfig {
   description: string | null
   formulaLatex: string | null
   formulaExpression: string | null
+  stepFormulas: string | null
   params: string
   signalThresholds: string
   enabled: boolean
   weight: number
+  category1: string | null
+  category2: string | null
+  category3: string | null
+  chartType: string | null
+  subChart: boolean | null
+  groupId: string | null
+  group: { id: string; name: string; displayName: string; color: string | null } | null
 }
 
 const configs = ref<IndicatorConfig[]>([])
 const tableLoading = ref(false)
+const categoryFilter = ref("")
+const groupFilter = ref("")
+
+const filteredConfigs = computed(() => {
+  let list = configs.value
+  if (categoryFilter.value) {
+    list = list.filter((c) => (c.category1 ?? "custom") === categoryFilter.value)
+  }
+  if (groupFilter.value === "__ungrouped__") {
+    list = list.filter((c) => !c.groupId)
+  } else if (groupFilter.value) {
+    list = list.filter((c) => c.groupId === groupFilter.value)
+  }
+  return list
+})
 
 async function loadConfigs() {
   tableLoading.value = true
@@ -678,6 +993,12 @@ const editForm = reactive<{
   formulaLatex: string
   formulaExpression: string
   weight: number
+  category1: string
+  category2: string
+  category3: string
+  chartType: string
+  subChart: boolean
+  groupId: string | null
 }>({
   id: "",
   indicatorType: "",
@@ -686,10 +1007,16 @@ const editForm = reactive<{
   formulaLatex: "",
   formulaExpression: "",
   weight: 1.0,
+  category1: "custom",
+  category2: "",
+  category3: "",
+  chartType: "line",
+  subChart: true,
+  groupId: null,
 })
 const editParsedParams = reactive<Record<string, any>>({})
 const editParsedThresholds = reactive<Record<string, any>>({})
-
+const editStepFormulas = reactive<{ variable: string; label: string; expression: string }[]>([])
 function openEditDialog(row: IndicatorConfig) {
   editForm.id = row.id
   editForm.indicatorType = row.indicatorType
@@ -698,6 +1025,12 @@ function openEditDialog(row: IndicatorConfig) {
   editForm.formulaLatex = row.formulaLatex ?? ""
   editForm.formulaExpression = row.formulaExpression ?? ""
   editForm.weight = row.weight
+  editForm.category1 = row.category1 ?? "custom"
+  editForm.category2 = row.category2 ?? ""
+  editForm.category3 = row.category3 ?? ""
+  editForm.chartType = row.chartType ?? "line"
+  editForm.subChart = row.subChart ?? true
+  editForm.groupId = row.groupId ?? null
   editFormulaValid.value = false
   editFormulaError.value = ""
 
@@ -707,6 +1040,14 @@ function openEditDialog(row: IndicatorConfig) {
   Object.keys(editParsedThresholds).forEach((k) => delete editParsedThresholds[k])
   Object.assign(editParsedParams, params)
   Object.assign(editParsedThresholds, thresholds)
+
+  editStepFormulas.length = 0
+  if (row.stepFormulas) {
+    try {
+      const steps = JSON.parse(row.stepFormulas) as { variable: string; label: string; expression: string }[]
+      editStepFormulas.push(...steps)
+    } catch { /* ignore */ }
+  }
 
   editDialogVisible.value = true
 }
@@ -731,14 +1072,24 @@ async function saveEdit() {
   try {
     const params = JSON.stringify(editParsedParams)
     const signalThresholds = JSON.stringify(editParsedThresholds)
+    const stepFormulas = editStepFormulas.length > 0
+      ? JSON.stringify(editStepFormulas.filter((s) => s.variable && s.expression))
+      : null
     await updateIndicatorConfig(editForm.id, {
       displayName: editForm.displayName,
       description: editForm.description || null,
       formulaLatex: editForm.formulaLatex || null,
       formulaExpression: editForm.formulaExpression || null,
+      stepFormulas,
       params,
       signalThresholds,
       weight: editForm.weight,
+      category1: editForm.category1,
+      category2: editForm.category2 || null,
+      category3: editForm.category3 || null,
+      chartType: editForm.chartType,
+      subChart: editForm.subChart,
+      groupId: editForm.groupId,
     })
     ElMessage.success(`${editForm.displayName} 已保存`)
     editDialogVisible.value = false
@@ -832,7 +1183,7 @@ function handleResize() {
 // ── Init ──
 onMounted(async () => {
   window.addEventListener("resize", handleResize)
-  await Promise.all([loadOhlcData(), loadConfigs()])
+  await Promise.all([loadOhlcData(), loadConfigs(), loadGroups()])
 })
 
 onBeforeUnmount(() => {
@@ -864,7 +1215,9 @@ onBeforeUnmount(() => {
 
 /* Formula builder */
 .builder-panel { display: flex; flex-direction: column; gap: 10px; }
-.insert-group {}
+.insert-group {
+  margin-bottom: 2px;
+}
 .insert-label { font-size: 11px; color: #909399; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip-row .el-button { font-size: 12px; padding: 4px 8px; }
@@ -874,7 +1227,8 @@ onBeforeUnmount(() => {
 .formula-status { display: flex; align-items: center; gap: 8px; }
 
 .preview-panel { display: flex; flex-direction: column; height: 100%; }
-.preview-title { font-size: 12px; color: #909399; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; }
+.preview-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.preview-title { font-size: 12px; color: #909399; font-weight: 600; text-transform: uppercase; }
 .preview-chart { flex: 1; min-height: 300px; }
 .preview-empty {
   display: flex; align-items: center; justify-content: center;
@@ -882,7 +1236,9 @@ onBeforeUnmount(() => {
 }
 
 /* Create form */
-.create-form {}
+.create-form {
+  margin-top: 4px;
+}
 
 /* Table */
 .formula-cell {
@@ -891,10 +1247,29 @@ onBeforeUnmount(() => {
 }
 .no-formula { color: #c0c4cc; font-size: 12px; }
 
+/* Group dot */
+.group-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 4px; vertical-align: middle;
+}
+
+/* Filter bar */
+.filter-bar { display: flex; gap: 8px; }
+
 /* Edit dialog params */
 .params-editor { display: flex; flex-direction: column; gap: 8px; }
 .param-row { display: flex; align-items: center; gap: 8px; }
 .param-label { font-size: 13px; color: #606266; min-width: 80px; }
 .buy-label { color: #67c23a; font-weight: 600; }
 .sell-label { color: #f56c6c; font-weight: 600; }
+
+/* Step formulas editor */
+.step-formulas-editor { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.step-row { display: flex; align-items: center; gap: 6px; }
+.step-num {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #409eff; color: #fff; font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
 </style>

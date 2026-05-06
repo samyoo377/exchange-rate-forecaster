@@ -8,7 +8,7 @@ import { testFetchSource } from "../services/news/newsFetcher.js"
 import { digestRecentNews } from "../services/news/newsDigester.js"
 import { streamAdminChat, executeAdminQuery, getAdminModels } from "../services/ai/adminAssistant.js"
 import { invalidateConfigCache } from "../services/indicators/configService.js"
-import { validateFormula, evaluateFormula } from "../services/indicators/formulaEvaluator.js"
+import { validateFormula, evaluateFormula, validateStepFormulas } from "../services/indicators/formulaEvaluator.js"
 import { getLatestBars } from "../services/dashboard/dashboardService.js"
 import {
   createSession, listSessions, getSessionWithMessages,
@@ -28,6 +28,7 @@ const TABLE_MAP: Record<string, any> = {
   ChatMessage: () => prisma.chatMessage,
   UploadedFile: () => prisma.uploadedFile,
   IndicatorConfig: () => prisma.indicatorConfig,
+  IndicatorGroup: () => prisma.indicatorGroup,
   NewsFetchLog: () => prisma.newsFetchLog,
 }
 
@@ -120,19 +121,19 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       },
     }).catch(() => null)
     try {
-      const count = await fetchAllNews()
+      const result = await fetchAllNews()
       if (taskLog) {
         await prisma.taskRunLog.update({
           where: { id: taskLog.id },
           data: {
             status: "success",
             finishedAt: new Date(),
-            outputRef: JSON.stringify({ fetchedCount: count }),
+            outputRef: JSON.stringify(result),
           },
         }).catch(() => {})
       }
       resetCronTimer("news_fetch")
-      return ok({ triggered: true, fetchedCount: count })
+      return ok({ triggered: true, ...result })
     } catch (e) {
       if (taskLog) {
         await prisma.taskRunLog.update({
@@ -609,9 +610,10 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
   // ── Formula preview (evaluate expression against real data) ──
   app.post("/api/v1/admin/indicator-configs/preview-formula", async (req, reply) => {
-    const { expression, params } = req.body as {
+    const { expression, params, timeframe } = req.body as {
       expression: string
       params?: Record<string, number>
+      timeframe?: string
     }
     if (!expression?.trim()) {
       reply.status(400)
@@ -622,24 +624,96 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       return ok({ valid: false, error: validation.error, dates: [], values: [] })
     }
     try {
+      const limitMap: Record<string, number> = { "1h": 120, "4h": 90, "1d": 60 }
+      const limit = limitMap[timeframe ?? "1d"] ?? 60
       const bars = await getLatestBars(
         (process.env.DEFAULT_SYMBOL ?? "USDCNH"),
-        60,
+        limit,
       )
       if (bars.length === 0) {
         return ok({ valid: true, dates: [], values: [], error: "暂无行情数据" })
       }
       const values = evaluateFormula(expression, bars, params ?? {})
       const dates = bars.map((b) => b.tradeDate.toISOString().slice(0, 10))
-      return ok({ valid: true, dates, values })
+      return ok({ valid: true, dates, values, timeframe: timeframe ?? "1d" })
     } catch (e) {
       return ok({ valid: false, error: (e as Error).message, dates: [], values: [] })
     }
   })
 
+  // ── Indicator Group CRUD ──
+  app.get("/api/v1/admin/indicator-groups", async () => {
+    const groups = await prisma.indicatorGroup.findMany({
+      orderBy: { sortOrder: "asc" },
+      include: { _count: { select: { indicators: true } } },
+    })
+    return ok(groups)
+  })
+
+  app.post("/api/v1/admin/indicator-groups", async (req, reply) => {
+    const body = req.body as {
+      name: string; displayName: string; description?: string
+      sortOrder?: number; icon?: string; color?: string
+    }
+    if (!body.name || !body.displayName) {
+      reply.status(400)
+      return err(400, "name 和 displayName 为必填项")
+    }
+    try {
+      const group = await prisma.indicatorGroup.create({
+        data: {
+          name: body.name,
+          displayName: body.displayName,
+          description: body.description,
+          sortOrder: body.sortOrder ?? 0,
+          icon: body.icon,
+          color: body.color,
+        },
+      })
+      return ok(group)
+    } catch (e) {
+      reply.status(500)
+      return err(500, (e as Error).message)
+    }
+  })
+
+  app.put<{ Params: { id: string } }>("/api/v1/admin/indicator-groups/:id", async (req, reply) => {
+    const { id } = req.params
+    const body = req.body as Partial<{
+      name: string; displayName: string; description: string
+      sortOrder: number; icon: string; color: string
+    }>
+    try {
+      const group = await prisma.indicatorGroup.update({ where: { id }, data: body })
+      return ok(group)
+    } catch (e) {
+      reply.status(500)
+      return err(500, (e as Error).message)
+    }
+  })
+
+  app.delete<{ Params: { id: string } }>("/api/v1/admin/indicator-groups/:id", async (req, reply) => {
+    const { id } = req.params
+    try {
+      const count = await prisma.indicatorConfig.count({ where: { groupId: id } })
+      if (count > 0) {
+        reply.status(400)
+        return err(400, `该分组下仍有 ${count} 个指标配置，请先调整它们的分组后再删除`)
+      }
+      await prisma.indicatorGroup.delete({ where: { id } })
+      return ok({ deleted: true })
+    } catch (e) {
+      reply.status(500)
+      return err(500, (e as Error).message)
+    }
+  })
+
   // ── Indicator Config CRUD ──
   app.get("/api/v1/admin/indicator-configs", async () => {
-    const configs = await prisma.indicatorConfig.findMany({ orderBy: { createdAt: "asc" } })
+    const configs = await prisma.indicatorConfig.findMany({
+      orderBy: { createdAt: "asc" },
+      include: { group: { select: { id: true, name: true, displayName: true, color: true } } },
+    })
     return ok(configs)
   })
 
@@ -648,6 +722,8 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const body = req.body as Partial<{
       params: string; signalThresholds: string; enabled: boolean; weight: number
       displayName: string; description: string; formulaLatex: string; formulaExpression: string
+      category1: string; category2: string; category3: string; groupId: string | null
+      stepFormulas: string; chartType: string; subChart: boolean
     }>
     try {
       const config = await prisma.indicatorConfig.update({ where: { id }, data: body })
@@ -662,8 +738,10 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   app.post("/api/v1/admin/indicator-configs", async (req, reply) => {
     const body = req.body as {
       indicatorType: string; displayName: string; description?: string
-      formulaLatex?: string; formulaExpression?: string
+      formulaLatex?: string; formulaExpression?: string; stepFormulas?: string
       params: string; signalThresholds: string; weight?: number
+      category1?: string; category2?: string; category3?: string; groupId?: string
+      chartType?: string; subChart?: boolean
     }
     if (!body.indicatorType || !body.displayName || !body.params || !body.signalThresholds) {
       reply.status(400)
@@ -677,9 +755,16 @@ export async function registerAdminRoutes(app: FastifyInstance) {
           description: body.description,
           formulaLatex: body.formulaLatex,
           formulaExpression: body.formulaExpression,
+          stepFormulas: body.stepFormulas,
           params: body.params,
           signalThresholds: body.signalThresholds,
           weight: body.weight ?? 1.0,
+          category1: body.category1 ?? "custom",
+          category2: body.category2,
+          category3: body.category3,
+          groupId: body.groupId,
+          chartType: body.chartType ?? "line",
+          subChart: body.subChart ?? true,
         },
       })
       invalidateConfigCache()
@@ -704,5 +789,91 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   app.post("/api/v1/admin/indicator-configs/validate-formula", async (req) => {
     const { expression } = req.body as { expression: string }
     return ok(validateFormula(expression ?? ""))
+  })
+
+  // ── Validate step formulas ──
+  app.post("/api/v1/admin/indicator-configs/validate-step-formulas", async (req) => {
+    const { steps, params } = req.body as {
+      steps: { variable: string; label: string; expression: string; description?: string }[]
+      params?: Record<string, number>
+    }
+    if (!Array.isArray(steps)) return ok({ valid: false, errors: [{ step: 0, variable: "", error: "steps must be an array" }] })
+    return ok(validateStepFormulas(steps, params ?? {}))
+  })
+
+  // ── Indicator category tree ──
+  app.get("/api/v1/admin/indicator-categories", async () => {
+    const configs = await prisma.indicatorConfig.findMany({
+      select: { category1: true, category2: true, category3: true },
+    })
+    const tree: Record<string, Record<string, Set<string>>> = {}
+    for (const c of configs) {
+      const c1 = c.category1 ?? "custom"
+      const c2 = c.category2 ?? "default"
+      const c3 = c.category3 ?? ""
+      if (!tree[c1]) tree[c1] = {}
+      if (!tree[c1][c2]) tree[c1][c2] = new Set()
+      if (c3) tree[c1][c2].add(c3)
+    }
+    const result = Object.entries(tree).map(([c1, c2Map]) => ({
+      category1: c1,
+      children: Object.entries(c2Map).map(([c2, c3Set]) => ({
+        category2: c2,
+        children: [...c3Set],
+      })),
+    }))
+    return ok(result)
+  })
+
+  // ── Latest task output (for cron job detail view) ──
+  app.get<{ Params: { taskType: string } }>("/api/v1/admin/cron/latest-output/:taskType", async (req) => {
+    const { taskType } = req.params
+    const log = await prisma.taskRunLog.findFirst({
+      where: { taskType, status: "success" },
+      orderBy: { finishedAt: "desc" },
+    })
+    if (!log?.outputRef) return ok(null)
+    try {
+      return ok(JSON.parse(log.outputRef))
+    } catch {
+      return ok(null)
+    }
+  })
+
+  // ── Predictions timeline (for AI prediction chart) ──
+  app.get("/api/v1/admin/predictions/timeline", async (req) => {
+    const query = req.query as { symbol?: string; limit?: string }
+    const symbol = query.symbol ?? process.env.DEFAULT_SYMBOL ?? "USDCNH"
+    const limit = Math.min(100, Math.max(1, parseInt(query.limit ?? "30")))
+
+    const predictions = await prisma.predictionResult.findMany({
+      where: { symbol },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: {
+        id: true,
+        symbol: true,
+        direction: true,
+        confidence: true,
+        horizon: true,
+        createdAt: true,
+        modelVersion: true,
+        signalsSnapshot: true,
+        indicatorsSnapshot: true,
+      },
+    })
+    return ok(predictions.reverse())
+  })
+
+  // ── Single prediction detail ──
+  app.get<{ Params: { id: string } }>("/api/v1/admin/predictions/:id", async (req, reply) => {
+    const prediction = await prisma.predictionResult.findUnique({
+      where: { id: req.params.id },
+    })
+    if (!prediction) {
+      reply.status(404)
+      return err(404, "Prediction not found")
+    }
+    return ok(prediction)
   })
 }

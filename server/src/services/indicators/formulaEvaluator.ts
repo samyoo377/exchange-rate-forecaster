@@ -136,3 +136,114 @@ export function validateFormula(expression: string): { valid: boolean; error?: s
     return { valid: false, error: (e as Error).message }
   }
 }
+
+export interface StepFormula {
+  variable: string
+  label: string
+  expression: string
+  description?: string
+}
+
+export function evaluateStepFormulas(
+  steps: StepFormula[],
+  bars: OhlcBar[],
+  params: Record<string, number>,
+): { results: Record<string, (number | null)[]>; finalVariable: string } {
+  const n = bars.length
+  const close = extractSeries(bars, "close")
+  const open = extractSeries(bars, "open")
+  const high = extractSeries(bars, "high")
+  const low = extractSeries(bars, "low")
+  const volume = bars.map((b) => b.volume ?? 0)
+
+  const scope: Record<string, any> = {
+    ...params,
+    close, open, high, low, volume,
+    n,
+    sma: (arr: number[], p: number) => sma(arr, p),
+    ema: (arr: number[], p: number) => ema(arr, p),
+    stddev: (arr: number[], p: number) => stddev(arr, p),
+    highest: (arr: number[], p: number) => highest(arr, p),
+    lowest: (arr: number[], p: number) => lowest(arr, p),
+    change: (arr: number[], p: number) => change(arr, p),
+    abs: Math.abs,
+    max: Math.max,
+    min: Math.min,
+    sqrt: Math.sqrt,
+    sin: Math.sin,
+    cos: Math.cos,
+    tan: Math.tan,
+    log: Math.log,
+    log2: Math.log2,
+    log10: Math.log10,
+    exp: Math.exp,
+    pow: Math.pow,
+    round: Math.round,
+    ceil: Math.ceil,
+    floor: Math.floor,
+    PI: Math.PI,
+    E: Math.E,
+  }
+
+  const results: Record<string, (number | null)[]> = {}
+  let lastVar = ""
+
+  for (const step of steps) {
+    try {
+      const raw = math.evaluate(step.expression, scope)
+      let series: (number | null)[]
+
+      if (Array.isArray(raw)) {
+        series = raw.map((v: any) =>
+          v === null || v === undefined || isNaN(v) || !isFinite(v) ? null : Number(v),
+        )
+      } else if (typeof raw === "number" && isFinite(raw)) {
+        series = Array(n).fill(raw)
+      } else {
+        series = Array(n).fill(null)
+      }
+
+      results[step.variable] = series
+      scope[step.variable] = series
+      lastVar = step.variable
+    } catch {
+      results[step.variable] = Array(n).fill(null)
+      scope[step.variable] = Array(n).fill(null)
+      lastVar = step.variable
+    }
+  }
+
+  return { results, finalVariable: lastVar }
+}
+
+export function validateStepFormulas(
+  steps: StepFormula[],
+  params: Record<string, number>,
+): { valid: boolean; errors: { step: number; variable: string; error: string }[] } {
+  const errors: { step: number; variable: string; error: string }[] = []
+  const knownVars = new Set([
+    "close", "open", "high", "low", "volume", "n",
+    "sma", "ema", "stddev", "highest", "lowest", "change",
+    "abs", "max", "min", "sqrt", "sin", "cos", "tan",
+    "log", "log2", "log10", "exp", "pow", "round", "ceil", "floor",
+    "PI", "E",
+    ...Object.keys(params),
+  ])
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i]
+    if (!step.variable || !step.expression) {
+      errors.push({ step: i, variable: step.variable ?? "", error: "变量名和表达式不能为空" })
+      continue
+    }
+    try {
+      math.parse(step.expression)
+    } catch (e) {
+      errors.push({ step: i, variable: step.variable, error: (e as Error).message })
+      continue
+    }
+    knownVars.add(step.variable)
+  }
+
+  return { valid: errors.length === 0, errors }
+}

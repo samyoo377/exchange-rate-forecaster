@@ -249,10 +249,50 @@ export interface IndicatorConfigInfo {
   dataKeys: string[]
   isBuiltin: boolean
   chartType: "line" | "bar"
+  subChart: boolean
+  category1: string | null
+  category2: string | null
+  category3: string | null
+  groupId: string | null
+  groupName: string | null
+  groupColor: string | null
+  groupSortOrder: number
 }
 
 export async function getIndicatorConfigs(): Promise<IndicatorConfigInfo[]> {
   const res = await http.get<ApiResponse<IndicatorConfigInfo[]>>("/api/v1/indicators/configs")
   if (res.data.code !== 0) throw new Error(res.data.message)
   return res.data.data ?? []
+}
+
+// ── Predictions Timeline ──
+
+export interface PredictionTimelineItem {
+  id: string
+  symbol: string
+  direction: "bullish" | "bearish" | "neutral"
+  confidence: number
+  horizon: string
+  createdAt: string
+  modelVersion: string
+  signalsSnapshot: string | null
+  indicatorsSnapshot: string | null
+  rationale: string | null
+}
+
+export async function getPredictionsTimeline(
+  symbol = "USDCNH",
+  limit = 30,
+): Promise<PredictionTimelineItem[]> {
+  const res = await http.get<ApiResponse<PredictionTimelineItem[]>>(
+    `/api/v1/predictions/timeline?symbol=${symbol}&limit=${limit}`,
+  )
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data ?? []
+}
+
+export async function getPredictionDetail(id: string): Promise<PredictionResult | null> {
+  const res = await http.get<ApiResponse<PredictionResult>>(`/api/v1/predictions/${id}`)
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data
 }
