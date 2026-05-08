@@ -38,7 +38,7 @@ app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, 
 await registerRoutes(app)
 await registerAdminRoutes(app)
 
-const port = parseInt(process.env.PORT ?? "3001")
+const port = parseInt(process.env.PORT ?? "4001")
 const host = process.env.HOST ?? "0.0.0.0"
 
 try {

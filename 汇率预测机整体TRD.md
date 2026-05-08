@@ -529,7 +529,7 @@ server/
 
 ```env
 NODE_ENV=development
-PORT=3001
+PORT=4001
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
 MYSQL_USER=root

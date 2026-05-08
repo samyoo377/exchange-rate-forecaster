@@ -9,7 +9,7 @@ pnpm install
 # 2. 推送数据库表结构（如首次或 schema 有变更）
 DATABASE_URL="file:./dev.db" ./server/node_modules/.bin/prisma db push --accept-data-loss
 
-# 3. 启动后端服务（端口 3001）
+# 3. 启动后端服务（端口 4001）
 pnpm dev:server
 
 # 4. 启动 Admin 管理后台（端口 5174）
@@ -20,9 +20,9 @@ pnpm dev:web
 ```
 
 **访问地址：**
-- 管理后台：http://localhost:5174
-- 前台应用：http://localhost:5173
-- API 服务：http://localhost:3001
+- 管理后台：http://localhost:4174
+- 前台应用：http://localhost:4173
+- API 服务：http://localhost:4001
 
 ---
 
@@ -30,14 +30,14 @@ pnpm dev:web
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  Admin 前端 (Vue3 + Element Plus)   端口 5174                   │
+│  Admin 前端 (Vue3 + Element Plus)   端口 4174                   │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          │
 │  │ 系统概览 │ │ 定时任务 │ │ 数据浏览 │ │ AI 助手  │          │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────┘          │
 └─────────────────────┬──────────────────────────────────────────┘
-                      │ HTTP (Vite Proxy → :3001)
+                      │ HTTP (Vite Proxy → :4001)
 ┌─────────────────────▼──────────────────────────────────────────┐
-│  Fastify 后端   端口 3001                                       │
+│  Fastify 后端   端口 4001                                       │
 │  ┌─────────────────────────────────────────┐                   │
 │  │ Admin API Routes (/api/v1/admin/...)    │                   │
 │  │  • GET  /cron/status                    │                   │
@@ -203,7 +203,7 @@ interface CronJobStatus {
 admin/
 ├── index.html                       # 入口 HTML
 ├── package.json                     # 依赖配置
-├── vite.config.ts                   # Vite 配置（端口 5174，代理 → :3001）
+├── vite.config.ts                   # Vite 配置（端口 5174，代理 → :4001）
 ├── tsconfig.json
 ├── tsconfig.node.json
 └── src/
@@ -267,8 +267,8 @@ ABL_API_TOKEN=sk-xxxxx
 
 ## 九、注意事项
 
-1. **端口规划**：Server `:3001`，Web `:5173`，Admin `:5174`
-2. **代理配置**：Admin 的 Vite 配置已将 `/api` 代理到 `:3001`
+1. **端口规划**：Server `:4001`，Web `:4173`，Admin `:4174`
+2. **代理配置**：Admin 的 Vite 配置已将 `/api` 代理到 `:4001`
 3. **数据库**：当前使用 SQLite（`prisma/dev.db`），适合开发环境；生产环境建议切换为 MySQL/PostgreSQL
 4. **AI API**：管理助手和新闻消化共用同一个 API 网关地址和 Token
 5. **Cron 状态**：为内存级追踪，服务重启后统计归零
