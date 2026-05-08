@@ -1,0 +1,26 @@
+汇率预测机整体TRD.md
+  h_410bf04442f115 532
+.env.example
+  h_410bf04442f115 2
+admin/vite.config.ts
+  h_410bf04442f115 16,19
+server/src/app.ts
+  h_410bf04442f115 41
+admin中后台管理清单.md
+  h_410bf04442f115 12,23-25,33,38,40,206,270-271
+web/vite.config.ts
+  h_410bf04442f115 13,16,20
+scripts/start-all.sh
+  h_410bf04442f115 22,31,36,42-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "b8faa44a9d5c9ca7b79cae85d426a2c89b870ec8",
+  "prompts": {},
+  "humans": {
+    "h_410bf04442f115": {
+      "author": "samyoo <samyoo.zhangzhenyu@ksher.com>"
+    }
+  }
+}
