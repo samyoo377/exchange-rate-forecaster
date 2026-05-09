@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client"
 import { prisma } from "../utils/db.js"
 import { ok, err } from "../utils/helpers.js"
 import { getCronStatus, requestAbort, resetCronTimer } from "../services/news/index.js"
+import { getPredictionCronStatus, triggerPredictionManually } from "../services/prediction/predictionCron.js"
 import { fetchAllNews } from "../services/news/newsFetcher.js"
 import { testFetchSource } from "../services/news/newsFetcher.js"
 import { digestRecentNews } from "../services/news/newsDigester.js"
@@ -13,6 +14,7 @@ import { getLatestBars } from "../services/dashboard/dashboardService.js"
 import {
   createSession, listSessions, getSessionWithMessages,
   deleteSession, addMessage, generateSessionTitle, getSessionHistory,
+  enrichMessagesWithAttachments,
 } from "../services/chat/sessionService.js"
 
 const TABLE_MAP: Record<string, any> = {
@@ -102,7 +104,9 @@ function buildFiltersWhere(
 export async function registerAdminRoutes(app: FastifyInstance) {
   // ── Cron status ──
   app.get("/api/v1/admin/cron/status", async () => {
-    return ok(getCronStatus())
+    const newsStatus = getCronStatus()
+    const predictionStatus = getPredictionCronStatus()
+    return ok([...newsStatus, predictionStatus])
   })
 
   // ── Admin AI models ──
@@ -184,6 +188,16 @@ export async function registerAdminRoutes(app: FastifyInstance) {
           },
         }).catch(() => {})
       }
+      return err(500, (e as Error).message)
+    }
+  })
+
+  // ── Manual trigger: prediction ──
+  app.post("/api/v1/admin/cron/trigger/prediction", async () => {
+    try {
+      const status = await triggerPredictionManually()
+      return ok({ triggered: true, status })
+    } catch (e) {
       return err(500, (e as Error).message)
     }
   })
@@ -410,11 +424,12 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
   // ── Admin AI chat (SSE stream) with session persistence ──
   app.post("/api/v1/admin/chat/stream", async (req, reply) => {
-    const { message, sessionId: inputSessionId, history, model } = req.body as {
+    const { message, sessionId: inputSessionId, history, model, attachmentIds } = req.body as {
       message: string
       sessionId?: string
       history?: { role: "user" | "assistant"; content: string }[]
       model?: string
+      attachmentIds?: string[]
     }
 
     if (!message) return err(400, "message is required")
@@ -441,7 +456,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         reply.raw.write(`data: ${JSON.stringify({ sessionId })}\n\n`)
       }
 
-      await addMessage(sessionId, "user", message)
+      await addMessage(sessionId, "user", message, attachmentIds)
 
       if (isNewSession) {
         await generateSessionTitle(sessionId, message)
@@ -460,7 +475,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       }
 
       let fullResponse = ""
-      for await (const chunk of streamAdminChat(message, chatHistory, model)) {
+      for await (const chunk of streamAdminChat(message, chatHistory, model, attachmentIds ?? [])) {
         reply.raw.write(`data: ${JSON.stringify({ content: chunk })}\n\n`)
         fullResponse += chunk
       }
@@ -491,7 +506,8 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       reply.status(404)
       return err(40401, "会话不存在")
     }
-    return ok(session)
+    const enrichedMessages = await enrichMessagesWithAttachments(session.messages)
+    return ok({ ...session, messages: enrichedMessages })
   })
 
   app.delete<{ Params: { id: string } }>("/api/v1/admin/chat/sessions/:id", async (req, reply) => {

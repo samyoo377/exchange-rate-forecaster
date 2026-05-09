@@ -4,6 +4,7 @@ import { computeSignalsFromConfig } from "../prediction/engine.js"
 import { getLatestBars } from "../dashboard/dashboardService.js"
 import { getLatestDigest } from "../news/index.js"
 import { getFileAsBase64, extractTextFromFile, isImageMime } from "../file/fileService.js"
+import { executeDataQuery, AVAILABLE_QUERIES } from "./dataQuery.js"
 import type { OhlcBar, IndicatorValues, SignalResult } from "../../types/index.js"
 
 const ABL_API_BASE_URL = process.env.ABL_API_BASE_URL ?? "https://api.ablai.top"
@@ -132,6 +133,7 @@ const SYSTEM_PROMPT = `你是一个专业的外汇市场分析助手，专注于
 4. 解释分析逻辑，让用户理解判断依据
 5. 如果有消息面摘要，在技术面分析之后附上简短的消息面解读作为辅助参考
 6. 如果用户上传了图片或文件，结合上传内容和市场数据进行分析
+7. 当用户询问历史数据、统计信息或需要查询数据库时，使用提供的数据查询工具获取数据
 
 分析规则：
 - RSI < 30 且上拐 → 超卖反弹信号（偏多）
@@ -148,7 +150,8 @@ const SYSTEM_PROMPT = `你是一个专业的外汇市场分析助手，专注于
 - 结构清晰，先给结论再展开分析
 - 以技术面为主，消息面为辅。技术分析结束后，如有消息面数据，用"📰 消息面参考"小节简要概括（2-3句）
 - 标注置信度和风险提示
-- 不构成交易建议，仅作策略辅助参考`
+- 不构成交易建议，仅作策略辅助参考
+- 当需要查询更多数据时，主动使用 query_data 工具`
 
 async function buildMultimodalUserContent(
   userMessage: string,
@@ -210,6 +213,31 @@ export async function buildChatMessages(
   return messages
 }
 
+const TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "query_data",
+      description: "查询数据库中的市场数据、预测历史、指标值、新闻摘要或统计信息。仅支持只读查询。",
+      parameters: {
+        type: "object",
+        properties: {
+          query_type: {
+            type: "string",
+            enum: AVAILABLE_QUERIES.map((q) => q.name),
+            description: AVAILABLE_QUERIES.map((q) => `${q.name}: ${q.description}`).join("; "),
+          },
+          params: {
+            type: "object",
+            description: "查询参数，根据 query_type 不同而不同",
+          },
+        },
+        required: ["query_type"],
+      },
+    },
+  },
+]
+
 export async function* streamChat(
   userMessage: string,
   symbol: string,
@@ -225,53 +253,114 @@ export async function* streamChat(
     attachmentIds,
   )
 
-  const response = await fetch(`${ABL_API_BASE_URL}/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${ABL_API_TOKEN}`,
-    },
-    body: JSON.stringify({
-      model: ABL_MODEL_ID,
-      messages,
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 2048,
-    }),
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`AI API 请求失败 (${response.status}): ${text}`)
-  }
-
-  const reader = response.body?.getReader()
-  if (!reader) throw new Error("无法读取响应流")
-
-  const decoder = new TextDecoder()
-  let buffer = ""
+  let currentMessages = [...messages]
+  const maxToolRounds = 3
+  let toolRound = 0
 
   while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
+    const useTools = toolRound < maxToolRounds
 
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
+    const response = await fetch(`${ABL_API_BASE_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ABL_API_TOKEN}`,
+      },
+      body: JSON.stringify({
+        model: ABL_MODEL_ID,
+        messages: currentMessages,
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 2048,
+        ...(useTools ? { tools: TOOLS, tool_choice: "auto" } : {}),
+      }),
+    })
 
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed || !trimmed.startsWith("data: ")) continue
-      const data = trimmed.slice(6)
-      if (data === "[DONE]") return
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`AI API 请求失败 (${response.status}): ${text}`)
+    }
 
-      try {
-        const parsed = JSON.parse(data)
-        const content = parsed.choices?.[0]?.delta?.content
-        if (content) yield content
-      } catch {
-        // skip malformed chunks
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error("无法读取响应流")
+
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let hasToolCall = false
+    let toolCallId = ""
+    let toolCallName = ""
+    let toolCallArgs = ""
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || !trimmed.startsWith("data: ")) continue
+        const data = trimmed.slice(6)
+        if (data === "[DONE]") continue
+
+        try {
+          const parsed = JSON.parse(data)
+          const choice = parsed.choices?.[0]
+          if (!choice) continue
+
+          const delta = choice.delta
+          if (delta?.content) {
+            yield delta.content
+          }
+
+          if (delta?.tool_calls) {
+            hasToolCall = true
+            for (const tc of delta.tool_calls) {
+              if (tc.id) toolCallId = tc.id
+              if (tc.function?.name) toolCallName = tc.function.name
+              if (tc.function?.arguments) toolCallArgs += tc.function.arguments
+            }
+          }
+        } catch {
+          // skip malformed chunks
+        }
       }
     }
+
+    if (!hasToolCall) break
+
+    toolRound++
+    let toolResult: string
+    try {
+      const args = JSON.parse(toolCallArgs || "{}")
+      const queryType = args.query_type ?? toolCallName.replace("query_data_", "")
+      const queryParams = args.params ?? args
+      const result = await executeDataQuery(queryType, queryParams)
+      toolResult = JSON.stringify(result, null, 2)
+    } catch (e) {
+      toolResult = JSON.stringify({ error: e instanceof Error ? e.message : String(e) })
+    }
+
+    currentMessages.push({
+      role: "assistant",
+      content: null as unknown as string,
+      tool_calls: [{
+        id: toolCallId,
+        type: "function",
+        function: { name: toolCallName, arguments: toolCallArgs },
+      }],
+    } as unknown as ChatMessage)
+
+    currentMessages.push({
+      role: "tool",
+      content: toolResult,
+      tool_call_id: toolCallId,
+    } as unknown as ChatMessage)
+
+    toolCallId = ""
+    toolCallName = ""
+    toolCallArgs = ""
   }
 }

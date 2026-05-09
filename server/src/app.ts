@@ -7,6 +7,7 @@ import fastifyStatic from "@fastify/static"
 import { registerRoutes } from "./routes/index.js"
 import { registerAdminRoutes } from "./routes/admin.js"
 import { startNewsCronJobs } from "./services/news/index.js"
+import { startPredictionCronJob } from "./services/prediction/predictionCron.js"
 import { migrateIndicatorCategories } from "./services/migrateIndicatorCategories.js"
 import { getUploadsDir } from "./services/file/fileService.js"
 
@@ -46,6 +47,7 @@ try {
   console.log(`🚀 Server running at http://localhost:${port}`)
   await migrateIndicatorCategories()
   startNewsCronJobs()
+  startPredictionCronJob()
 } catch (err) {
   app.log.error(err)
   process.exit(1)

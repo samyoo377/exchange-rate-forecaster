@@ -254,6 +254,9 @@
               <span v-if="row.group.color" class="group-dot" :style="{ background: row.group.color }" />
               {{ row.group.displayName }}
             </template>
+            <template v-else-if="row.category1">
+              {{ categoryLabel(row.category1) }}
+            </template>
             <span v-else class="no-formula">未分组</span>
           </template>
         </el-table-column>
@@ -529,6 +532,17 @@ import AiConfigHelper from "../components/AiConfigHelper.vue"
 
 const BUILTIN_TYPES = new Set(["RSI", "STOCH", "CCI", "ADX", "AO", "MOM"])
 function isBuiltin(type: string) { return BUILTIN_TYPES.has(type) }
+
+const CATEGORY_LABELS: Record<string, string> = {
+  momentum: "动量指标",
+  trend: "趋势指标",
+  volatility: "波动率指标",
+  support_resist: "支撑阻力",
+  custom: "自定义",
+}
+function categoryLabel(cat: string | null | undefined): string {
+  return CATEGORY_LABELS[cat ?? "custom"] ?? cat ?? "未分组"
+}
 
 // ── Section 0: Indicator Groups ──
 const groups = ref<IndicatorGroup[]>([])

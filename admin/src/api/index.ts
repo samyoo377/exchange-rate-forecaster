@@ -144,6 +144,7 @@ export function streamAdminChat(
   sessionId?: string,
   onSessionId?: (id: string) => void,
   model?: string,
+  attachmentIds?: string[],
 ): AbortController {
   const controller = new AbortController()
   let hadError = false
@@ -151,7 +152,7 @@ export function streamAdminChat(
   fetch("/api/v1/admin/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, sessionId, model }),
+    body: JSON.stringify({ message, history, sessionId, model, attachmentIds }),
     signal: controller.signal,
   })
     .then(async (res) => {
@@ -222,6 +223,29 @@ export async function getAdminChatSession(id: string) {
 
 export async function deleteAdminChatSession(id: string) {
   return unwrap(await http.delete(`/api/v1/admin/chat/sessions/${id}`))
+}
+
+// ── File Upload ──
+
+export interface UploadedFileInfo {
+  id: string
+  storedPath: string
+  originalName: string
+  mimeType: string
+  localUrl?: string
+}
+
+export async function uploadFile(file: File): Promise<UploadedFileInfo> {
+  const formData = new FormData()
+  formData.append("file", file)
+  const res = await http.post("/api/v1/files/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  })
+  const info = unwrap<UploadedFileInfo>(res)
+
+  const { cacheFileFromUpload } = await import("../utils/fileCache")
+  info.localUrl = await cacheFileFromUpload(info.id, file)
+  return info
 }
 
 // ── News Fetch Logs ──

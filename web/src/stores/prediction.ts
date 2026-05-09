@@ -6,6 +6,7 @@ import {
   getChatSessions, getChatSession, deleteChatSession,
   type NewsDigest, type ChatSessionSummary, type UploadedFileInfo,
 } from "../api/index"
+import { warmUrlCache, getFileUrl } from "../utils/fileCache"
 
 export interface ChatMessage {
   role: "user" | "assistant"
@@ -58,13 +59,34 @@ export const usePredictionStore = defineStore("prediction", () => {
         return
       }
       setSessionId(id)
-      messages.value = detail.messages
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          timestamp: m.createdAt,
-        }))
+
+      const allAttachmentIds = detail.messages
+        .flatMap((m) => m.attachments ?? [])
+        .map((a) => a.id)
+      if (allAttachmentIds.length > 0) {
+        await warmUrlCache(allAttachmentIds).catch(() => {})
+      }
+
+      messages.value = await Promise.all(
+        detail.messages
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map(async (m) => {
+            const attachments = m.attachments?.length
+              ? await Promise.all(
+                  m.attachments.map(async (a) => ({
+                    ...a,
+                    localUrl: (await getFileUrl(a.id).catch(() => null)) ?? undefined,
+                  })),
+                )
+              : undefined
+            return {
+              role: m.role as "user" | "assistant",
+              content: m.content,
+              timestamp: m.createdAt,
+              attachments,
+            }
+          }),
+      )
     } catch {
       setSessionId(null)
       messages.value = []

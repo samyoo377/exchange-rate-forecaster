@@ -4,7 +4,7 @@ import { fetchFromAlphaVantage, upsertSnapshots } from "../services/market-data/
 import { parseExcelFile } from "../services/file-ingestion/excelParser.js"
 import { getDashboard, runPrediction } from "../services/dashboard/dashboardService.js"
 import type { Interval } from "../services/dashboard/dashboardService.js"
-import { getPredictionHistory, getTaskHistory } from "../services/history/historyService.js"
+import { getPredictionHistory, getTaskHistory, getPredictionStats } from "../services/history/historyService.js"
 import { streamChat } from "../services/ai/chatService.js"
 import { digestRecentNews, getLatestDigest, fetchAllNews } from "../services/news/index.js"
 import { saveUploadedFile } from "../services/file/fileService.js"
@@ -12,6 +12,7 @@ import { getIndicatorConfigs } from "../services/indicators/configService.js"
 import {
   createSession, listSessions, getSessionWithMessages,
   deleteSession, addMessage, generateSessionTitle, getSessionHistory,
+  enrichMessagesWithAttachments,
 } from "../services/chat/sessionService.js"
 import { prisma } from "../utils/db.js"
 import * as path from "path"
@@ -175,7 +176,8 @@ export async function registerRoutes(app: FastifyInstance) {
       reply.status(404)
       return err(40401, "会话不存在")
     }
-    return ok(session)
+    const enrichedMessages = await enrichMessagesWithAttachments(session.messages)
+    return ok({ ...session, messages: enrichedMessages })
   })
 
   app.delete<{ Params: { id: string } }>("/api/v1/chat/sessions/:id", async (request, reply) => {
@@ -283,12 +285,23 @@ export async function registerRoutes(app: FastifyInstance) {
 
   // prediction history
   app.get("/api/v1/history/predictions", async (request) => {
-    const q = request.query as { symbol?: string; page?: string; pageSize?: string }
+    const q = request.query as {
+      symbol?: string; page?: string; pageSize?: string
+      direction?: string; horizon?: string; dateFrom?: string; dateTo?: string
+    }
     const symbol = q.symbol ?? process.env.DEFAULT_SYMBOL ?? "USDCNH"
     const page = Math.max(1, parseInt(q.page ?? "1"))
     const pageSize = Math.min(100, Math.max(1, parseInt(q.pageSize ?? "20")))
-    const result = await getPredictionHistory(symbol, page, pageSize)
+    const result = await getPredictionHistory(symbol, page, pageSize, q.direction, q.horizon, q.dateFrom, q.dateTo)
     return ok(result)
+  })
+
+  app.get("/api/v1/history/predictions/stats", async (request) => {
+    const q = request.query as { symbol?: string; days?: string }
+    const symbol = q.symbol ?? process.env.DEFAULT_SYMBOL ?? "USDCNH"
+    const days = Math.min(90, Math.max(1, parseInt(q.days ?? "30")))
+    const stats = await getPredictionStats(symbol, days)
+    return ok(stats)
   })
 
   // task history

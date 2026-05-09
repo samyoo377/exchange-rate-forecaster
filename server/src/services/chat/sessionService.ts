@@ -74,3 +74,41 @@ export async function getSessionHistory(sessionId: string): Promise<{ role: stri
   })
   return messages
 }
+
+export interface ResolvedAttachment {
+  id: string
+  storedPath: string
+  originalName: string
+  mimeType: string
+}
+
+export async function resolveAttachments(attachmentsJson: string | null): Promise<ResolvedAttachment[]> {
+  if (!attachmentsJson) return []
+  let ids: string[]
+  try {
+    ids = JSON.parse(attachmentsJson)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(ids) || ids.length === 0) return []
+
+  const files = await prisma.uploadedFile.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, storedPath: true, originalName: true, mimeType: true },
+  })
+  return files
+}
+
+export async function enrichMessagesWithAttachments(
+  messages: { id: string; role: string; content: string; attachments: string | null; createdAt: Date }[],
+) {
+  return Promise.all(
+    messages.map(async (m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      attachments: await resolveAttachments(m.attachments),
+      createdAt: m.createdAt.toISOString(),
+    })),
+  )
+}

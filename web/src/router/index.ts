@@ -5,19 +5,23 @@ export const router = createRouter({
   routes: [
     {
       path: "/",
-      redirect: "/dashboard",
+      redirect: "/overview",
     },
     {
-      path: "/dashboard",
-      component: () => import("../pages/DashboardPage.vue"),
+      path: "/overview",
+      component: () => import("../pages/OverviewPage.vue"),
     },
     {
-      path: "/history/predictions",
-      component: () => import("../pages/PredictionHistoryPage.vue"),
+      path: "/analysis",
+      component: () => import("../pages/AnalysisPage.vue"),
     },
-    // {
-    //   path: "/history/tasks",
-    //   component: () => import("../pages/TaskHistoryPage.vue"),
-    // },
+    {
+      path: "/intelligence",
+      component: () => import("../pages/IntelligencePage.vue"),
+    },
+    {
+      path: "/history",
+      component: () => import("../pages/HistoryPage.vue"),
+    },
   ],
 })

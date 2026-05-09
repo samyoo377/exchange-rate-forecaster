@@ -50,13 +50,39 @@ export async function queryPrediction(
 export async function getPredictionHistory(
   symbol = "USDCNH",
   page = 1,
-  pageSize = 20
+  pageSize = 20,
+  filters?: { direction?: string; horizon?: string; dateFrom?: string; dateTo?: string }
 ): Promise<PaginatedResult<PredictionResult>> {
+  const params = new URLSearchParams({ symbol, page: String(page), pageSize: String(pageSize) })
+  if (filters?.direction) params.set("direction", filters.direction)
+  if (filters?.horizon) params.set("horizon", filters.horizon)
+  if (filters?.dateFrom) params.set("dateFrom", filters.dateFrom)
+  if (filters?.dateTo) params.set("dateTo", filters.dateTo)
   const res = await http.get<ApiResponse<PaginatedResult<PredictionResult>>>(
-    `/api/v1/history/predictions?symbol=${symbol}&page=${page}&pageSize=${pageSize}`
+    `/api/v1/history/predictions?${params.toString()}`
   )
   if (res.data.code !== 0) throw new Error(res.data.message)
   return res.data.data as PaginatedResult<PredictionResult>
+}
+
+export interface PredictionStats {
+  total: number
+  bullish: number
+  bearish: number
+  neutral: number
+  avgConfidence: number
+  highConfidenceCount: number
+  recentTrend: { date: string; bullish: number; bearish: number; neutral: number }[]
+  confidenceTrend: { date: string; avg: number; count: number }[]
+  horizonDistribution: { horizon: string; count: number }[]
+}
+
+export async function getPredictionStats(symbol = "USDCNH", days = 30): Promise<PredictionStats> {
+  const res = await http.get<ApiResponse<PredictionStats>>(
+    `/api/v1/history/predictions/stats?symbol=${symbol}&days=${days}`
+  )
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data as PredictionStats
 }
 
 export async function getTaskHistory(
@@ -199,7 +225,7 @@ export interface ChatSessionDetail {
   title: string | null
   symbol: string
   horizon: string
-  messages: { id: string; role: string; content: string; attachments: string | null; createdAt: string }[]
+  messages: { id: string; role: string; content: string; attachments: UploadedFileInfo[] | null; createdAt: string }[]
 }
 
 export async function getChatSessions(scope = "web"): Promise<ChatSessionSummary[]> {
@@ -226,6 +252,7 @@ export interface UploadedFileInfo {
   storedPath: string
   originalName: string
   mimeType: string
+  localUrl?: string
 }
 
 export async function uploadFile(file: File): Promise<UploadedFileInfo> {
@@ -235,7 +262,15 @@ export async function uploadFile(file: File): Promise<UploadedFileInfo> {
     headers: { "Content-Type": "multipart/form-data" },
   })
   if (res.data.code !== 0) throw new Error(res.data.message)
-  return res.data.data as UploadedFileInfo
+  const info = res.data.data as UploadedFileInfo
+
+  try {
+    const { cacheFileFromUpload } = await import("../utils/fileCache")
+    info.localUrl = await cacheFileFromUpload(info.id, file)
+  } catch {
+    info.localUrl = URL.createObjectURL(file)
+  }
+  return info
 }
 
 // ── Indicator Configs ──

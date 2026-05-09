@@ -1,4 +1,5 @@
 import { prisma } from "../../utils/db.js"
+import { getFileAsBase64, isImageMime, extractTextFromFile } from "../file/fileService.js"
 
 const ABL_API_BASE_URL = process.env.ABL_API_BASE_URL ?? "https://api.ablai.top"
 const ABL_API_TOKEN = process.env.ABL_API_TOKEN ?? ""
@@ -37,8 +38,12 @@ export function getAdminModels() {
 
 interface ChatMessage {
   role: "system" | "user" | "assistant"
-  content: string
+  content: string | ContentPart[]
 }
+
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
 
 async function getTableStats() {
   const tables = [
@@ -121,14 +126,17 @@ export async function* streamAdminChat(
   userMessage: string,
   conversationHistory: ChatMessage[] = [],
   modelOverride?: string,
+  attachmentIds: string[] = [],
 ): AsyncGenerator<string> {
   const context = await buildAdminContext()
   const modelId = modelOverride || ADMIN_MODEL_ID
 
+  const userContent = await buildAdminUserContent(userMessage, attachmentIds)
+
   const messages: ChatMessage[] = [
     { role: "system", content: `${ADMIN_SYSTEM_PROMPT}\n\n${context}` },
     ...conversationHistory,
-    { role: "user", content: userMessage },
+    { role: "user", content: userContent },
   ]
 
   const response = await fetch(`${ABL_API_BASE_URL}/v1/chat/completions`, {
@@ -284,4 +292,37 @@ async function executeQuery(queryDef: ReadonlyQueryDef) {
 
 export async function executeAdminQuery(queryDef: ReadonlyQueryDef) {
   return executeQuery(queryDef)
+}
+
+async function buildAdminUserContent(
+  userMessage: string,
+  attachmentIds: string[],
+): Promise<string | ContentPart[]> {
+  if (attachmentIds.length === 0) return userMessage
+
+  const parts: ContentPart[] = [{ type: "text", text: userMessage }]
+  const textParts: string[] = []
+
+  for (const fileId of attachmentIds) {
+    const fileData = await getFileAsBase64(fileId)
+    if (!fileData) continue
+
+    if (isImageMime(fileData.mimeType)) {
+      parts.push({
+        type: "image_url",
+        image_url: { url: `data:${fileData.mimeType};base64,${fileData.base64}` },
+      })
+    } else {
+      const text = await extractTextFromFile(fileId)
+      if (text) {
+        textParts.push(`[附件内容]\n${text}`)
+      }
+    }
+  }
+
+  if (textParts.length > 0) {
+    parts[0] = { type: "text", text: `${userMessage}\n\n${textParts.join("\n\n")}` }
+  }
+
+  return parts.length === 1 && parts[0].type === "text" ? parts[0].text : parts
 }
