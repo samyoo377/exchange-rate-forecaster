@@ -5,6 +5,7 @@ import { getLatestBars } from "../dashboard/dashboardService.js"
 import { getLatestDigest } from "../news/index.js"
 import { getFileAsBase64, extractTextFromFile, isImageMime } from "../file/fileService.js"
 import { executeDataQuery, AVAILABLE_QUERIES } from "./dataQuery.js"
+import { getLatestQuantSignal } from "../quant/quantEngine.js"
 import type { OhlcBar, IndicatorValues, SignalResult } from "../../types/index.js"
 
 const ABL_API_BASE_URL = process.env.ABL_API_BASE_URL ?? "https://api.ablai.top"
@@ -60,6 +61,38 @@ async function getRecentPredictions(symbol: string, limit = 5) {
     orderBy: { createdAt: "desc" },
     take: limit,
   })
+}
+
+async function buildQuantSection(symbol: string): Promise<string> {
+  try {
+    const quant = await getLatestQuantSignal(symbol)
+    if (!quant) return ""
+
+    const dirLabel = quant.compositeScore > 20 ? "偏多" : quant.compositeScore < -20 ? "偏空" : "中性"
+    const regimeLabel: Record<string, string> = {
+      trending_up: "上升趋势",
+      trending_down: "下降趋势",
+      ranging: "震荡",
+      volatile: "高波动",
+    }
+
+    const signals = (quant.signals as { name: string; score: number; description: string }[])
+      .sort((a, b) => Math.abs(b.score) - Math.abs(a.score))
+      .slice(0, 5)
+      .map((s) => `- ${s.name}: ${s.score > 0 ? "+" : ""}${s.score.toFixed(0)} (${s.description})`)
+      .join("\n")
+
+    const age = Math.round((Date.now() - new Date(quant.createdAt).getTime()) / 60_000)
+
+    return `\n\n## 量化引擎信号 (${age}分钟前更新)
+综合评分: ${quant.compositeScore > 0 ? "+" : ""}${quant.compositeScore.toFixed(1)} / 100 (${dirLabel})
+市场状态: ${regimeLabel[quant.regime] ?? quant.regime}
+置信度: ${(quant.confidence * 100).toFixed(0)}%
+主要信号:
+${signals}`
+  } catch {
+    return ""
+  }
 }
 
 export async function buildRAGContext(symbol: string, horizon: string): Promise<string> {
@@ -121,7 +154,7 @@ ${formatIndicators(latestInd)}
 ${formatSignals(signals)}
 
 ## 近期预测历史
-${predHistory}${newsSection}`
+${predHistory}${newsSection}${await buildQuantSection(symbol)}`
 }
 
 const SYSTEM_PROMPT = `你是一个专业的外汇市场分析助手，专注于USD/CNH（美元兑离岸人民币）汇率分析和预测。
@@ -129,11 +162,12 @@ const SYSTEM_PROMPT = `你是一个专业的外汇市场分析助手，专注于
 你的职责：
 1. 基于提供的实时行情数据和技术指标，给出专业的市场分析
 2. 结合RSI、Stochastic、CCI、ADX、AO、MOM等技术指标进行综合研判
-3. 给出明确的方向判断（偏升/偏贬/震荡）和置信度评估
-4. 解释分析逻辑，让用户理解判断依据
-5. 如果有消息面摘要，在技术面分析之后附上简短的消息面解读作为辅助参考
-6. 如果用户上传了图片或文件，结合上传内容和市场数据进行分析
-7. 当用户询问历史数据、统计信息或需要查询数据库时，使用提供的数据查询工具获取数据
+3. 结合量化引擎的综合评分和多因子信号，给出更全面的方向判断
+4. 给出明确的方向判断（偏升/偏贬/震荡）和置信度评估
+5. 解释分析逻辑，让用户理解判断依据
+6. 如果有消息面摘要，在技术面分析之后附上简短的消息面解读作为辅助参考
+7. 如果用户上传了图片或文件，结合上传内容和市场数据进行分析
+8. 当用户询问历史数据、统计信息或需要查询数据库时，使用提供的数据查询工具获取数据
 
 分析规则：
 - RSI < 30 且上拐 → 超卖反弹信号（偏多）

@@ -14,6 +14,10 @@
     </div>
 
     <div class="section">
+      <QuantSignalPanel />
+    </div>
+
+    <div class="section">
       <IndicatorCharts :series="marketStore.series" :configs="marketStore.indicatorConfigs" />
     </div>
 
@@ -29,6 +33,7 @@ import { useMarketStore } from "../stores/market"
 import MarketChart from "../components/MarketChart.vue"
 import IndicatorCharts from "../components/IndicatorCharts.vue"
 import IndicatorCardGroup from "../components/IndicatorCardGroup.vue"
+import QuantSignalPanel from "../components/QuantSignalPanel.vue"
 
 const marketStore = useMarketStore()
 const currentInterval = ref(marketStore.interval || "1d")

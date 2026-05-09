@@ -217,3 +217,34 @@ model IndicatorConfig {
   @@index([category1, category2])
   @@index([groupId])
 }
+
+// ── Feature 4: Quantitative Trading Engine ──
+
+model QuantSignalSnapshot {
+  id             String   @id @default(cuid())
+  symbol         String
+  snapshotDate   DateTime
+  compositeScore Float
+  regime         String
+  confidence     Float
+  signals        String   @db.Text
+  metadata       String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  @@unique([symbol, snapshotDate])
+  @@index([symbol, createdAt])
+}
+
+model DataSourceHealth {
+  id            String    @id @default(cuid())
+  sourceName    String    @unique
+  enabled       Boolean   @default(true)
+  priority      Int       @default(0)
+  successCount  Int       @default(0)
+  failureCount  Int       @default(0)
+  lastSuccessAt DateTime?
+  lastFailureAt DateTime?
+  lastError     String?   @db.Text
+  avgLatencyMs  Float     @default(0)
+  updatedAt     DateTime  @updatedAt
+}

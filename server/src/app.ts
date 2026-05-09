@@ -6,8 +6,10 @@ import multipart from "@fastify/multipart"
 import fastifyStatic from "@fastify/static"
 import { registerRoutes } from "./routes/index.js"
 import { registerAdminRoutes } from "./routes/admin.js"
+import { registerQuantRoutes } from "./routes/quant.js"
 import { startNewsCronJobs } from "./services/news/index.js"
 import { startPredictionCronJob } from "./services/prediction/predictionCron.js"
+import { startQuantCronJob } from "./services/quant/quantCron.js"
 import { migrateIndicatorCategories } from "./services/migrateIndicatorCategories.js"
 import { getUploadsDir } from "./services/file/fileService.js"
 
@@ -38,6 +40,7 @@ app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, 
 
 await registerRoutes(app)
 await registerAdminRoutes(app)
+await registerQuantRoutes(app)
 
 const port = parseInt(process.env.PORT ?? "4001")
 const host = process.env.HOST ?? "0.0.0.0"
@@ -48,6 +51,7 @@ try {
   await migrateIndicatorCategories()
   startNewsCronJobs()
   startPredictionCronJob()
+  startQuantCronJob()
 } catch (err) {
   app.log.error(err)
   process.exit(1)
