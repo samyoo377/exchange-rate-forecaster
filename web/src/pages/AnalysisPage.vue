@@ -13,6 +13,15 @@
       <MarketChart :series="marketStore.series" @interval-change="onIntervalChange" :hide-interval="true" />
     </div>
 
+    <div class="charts-grid">
+      <div class="section">
+        <RateTrendChart />
+      </div>
+      <div class="section">
+        <RatePredictionChart />
+      </div>
+    </div>
+
     <div class="section">
       <QuantSignalPanel />
     </div>
@@ -34,6 +43,8 @@ import MarketChart from "../components/MarketChart.vue"
 import IndicatorCharts from "../components/IndicatorCharts.vue"
 import IndicatorCardGroup from "../components/IndicatorCardGroup.vue"
 import QuantSignalPanel from "../components/QuantSignalPanel.vue"
+import RateTrendChart from "../components/RateTrendChart.vue"
+import RatePredictionChart from "../components/RatePredictionChart.vue"
 
 const marketStore = useMarketStore()
 const currentInterval = ref(marketStore.interval || "1d")
@@ -60,5 +71,19 @@ async function onIntervalChange(interval: string) {
 .page-title { font-size: 16px; font-weight: 600; color: #1e293b; }
 .section {
   margin-bottom: 20px;
+}
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+@media (max-width: 1200px) {
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.charts-grid .section {
+  margin-bottom: 0;
 }
 </style>

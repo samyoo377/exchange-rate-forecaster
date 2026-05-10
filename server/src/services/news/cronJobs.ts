@@ -1,14 +1,18 @@
 import cron from "node-cron"
 import { fetchAllNews } from "./newsFetcher.js"
 import { digestRecentNews } from "./newsDigester.js"
+import { fetchRateTrend } from "../market-data/rateFetcher.js"
 import { prisma } from "../../utils/db.js"
 
 let fetchTask: cron.ScheduledTask | null = null
 let digestTask: cron.ScheduledTask | null = null
+let rateFetchTask1: cron.ScheduledTask | null = null
+let rateFetchTask2: cron.ScheduledTask | null = null
 
 const abortFlags: Record<string, boolean> = {
   news_fetch: false,
   news_digest: false,
+  rate_fetch: false,
 }
 
 export interface CronJobStatus {
@@ -56,6 +60,21 @@ const digestStatus: CronJobStatus = {
   startedAt: null,
 }
 
+const rateFetchStatus: CronJobStatus = {
+  name: "rate_fetch",
+  cron: "30 1,10 * * *",
+  intervalMs: 12 * 60 * 60_000,
+  running: false,
+  lastRunAt: null,
+  nextRunAt: null,
+  lastResult: null,
+  lastError: null,
+  lastDurationMs: null,
+  totalRuns: 0,
+  totalErrors: 0,
+  startedAt: null,
+}
+
 function computeNextCronRun(cronExpr: string): string {
   const now = new Date()
   const parts = cronExpr.split(" ")
@@ -85,18 +104,22 @@ function computeNextCronRun(cronExpr: string): string {
 export function getCronStatus(): CronJobStatus[] {
   fetchStatus.nextRunAt = computeNextCronRun(fetchStatus.cron)
   digestStatus.nextRunAt = computeNextCronRun(digestStatus.cron)
-  return [{ ...fetchStatus }, { ...digestStatus }]
+  rateFetchStatus.nextRunAt = computeNextCronRun(rateFetchStatus.cron)
+  return [{ ...fetchStatus }, { ...digestStatus }, { ...rateFetchStatus }]
 }
 
 export function startNewsCronJobs() {
   const now = new Date().toISOString()
   fetchStatus.startedAt = now
   digestStatus.startedAt = now
+  rateFetchStatus.startedAt = now
 
   fetchTask = createFetchSchedule()
   digestTask = createDigestSchedule()
+  rateFetchTask1 = createRateFetchSchedule("30 1 * * *")
+  rateFetchTask2 = createRateFetchSchedule("0 10 * * *")
 
-  console.log("[Cron] News fetch (every 5 min) and digest (every 30 min) started")
+  console.log("[Cron] News fetch (every 5 min), digest (every 30 min), rate fetch (09:30 & 18:00 CST) started")
 
   // initial fetch
   ;(async () => {
@@ -149,8 +172,12 @@ export function startNewsCronJobs() {
 export function stopNewsCronJobs() {
   fetchTask?.stop()
   digestTask?.stop()
+  rateFetchTask1?.stop()
+  rateFetchTask2?.stop()
   fetchTask = null
   digestTask = null
+  rateFetchTask1 = null
+  rateFetchTask2 = null
   console.log("[Cron] News cron jobs stopped")
 }
 
@@ -161,6 +188,10 @@ export function requestAbort(taskType: string): boolean {
   }
   if (taskType === "news_digest" && digestStatus.running) {
     abortFlags.news_digest = true
+    return true
+  }
+  if (taskType === "rate_fetch" && rateFetchStatus.running) {
+    abortFlags.rate_fetch = true
     return true
   }
   return false
@@ -302,4 +333,66 @@ export function resetCronTimer(taskType: string) {
     digestTask.stop()
     digestTask = createDigestSchedule()
   }
+}
+
+function createRateFetchSchedule(cronExpr: string) {
+  return cron.schedule(cronExpr, async () => {
+    abortFlags.rate_fetch = false
+    rateFetchStatus.running = true
+    const t0 = Date.now()
+    const taskLog = await prisma.taskRunLog.create({
+      data: {
+        taskType: "rate_fetch",
+        status: "running",
+        startedAt: new Date(),
+      },
+    }).catch(() => null)
+    try {
+      const result = await fetchRateTrend("M", "USD")
+      if (abortFlags.rate_fetch) {
+        rateFetchStatus.lastResult = "error"
+        rateFetchStatus.lastError = "已中断"
+        if (taskLog) {
+          await prisma.taskRunLog.update({
+            where: { id: taskLog.id },
+            data: { status: "aborted", finishedAt: new Date(), errorMessage: "用户手动中断" },
+          }).catch(() => {})
+        }
+      } else {
+        rateFetchStatus.lastResult = "success"
+        rateFetchStatus.lastError = null
+        if (taskLog) {
+          await prisma.taskRunLog.update({
+            where: { id: taskLog.id },
+            data: {
+              status: "success",
+              finishedAt: new Date(),
+              outputRef: JSON.stringify({ dataPoints: result.data.length, currentRate: result.currentRate }),
+            },
+          }).catch(() => {})
+        }
+      }
+    } catch (e) {
+      rateFetchStatus.lastResult = "error"
+      rateFetchStatus.lastError = (e as Error).message
+      rateFetchStatus.totalErrors++
+      console.error("[Cron] Rate fetch failed:", (e as Error).message)
+      if (taskLog) {
+        await prisma.taskRunLog.update({
+          where: { id: taskLog.id },
+          data: {
+            status: "failed",
+            finishedAt: new Date(),
+            errorMessage: (e as Error).message,
+          },
+        }).catch(() => {})
+      }
+    } finally {
+      rateFetchStatus.running = false
+      rateFetchStatus.lastRunAt = new Date().toISOString()
+      rateFetchStatus.lastDurationMs = Date.now() - t0
+      rateFetchStatus.totalRuns++
+      abortFlags.rate_fetch = false
+    }
+  })
 }

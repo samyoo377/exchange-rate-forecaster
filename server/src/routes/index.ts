@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify"
 import { ok, err } from "../utils/helpers.js"
 import { fetchFromAlphaVantage, upsertSnapshots } from "../services/market-data/alphaProvider.js"
+import { fetchRateTrend, aggregateDailyRates, computeMovingAverage } from "../services/market-data/rateFetcher.js"
 import { parseExcelFile } from "../services/file-ingestion/excelParser.js"
 import { getDashboard, runPrediction } from "../services/dashboard/dashboardService.js"
 import type { Interval } from "../services/dashboard/dashboardService.js"
@@ -9,6 +10,7 @@ import { streamChat } from "../services/ai/chatService.js"
 import { digestRecentNews, getLatestDigest, fetchAllNews } from "../services/news/index.js"
 import { saveUploadedFile } from "../services/file/fileService.js"
 import { getIndicatorConfigs } from "../services/indicators/configService.js"
+import { getLatestQuantSignal, getQuantHistory } from "../services/quant/quantEngine.js"
 import {
   createSession, listSessions, getSessionWithMessages,
   deleteSession, addMessage, generateSessionTitle, getSessionHistory,
@@ -534,4 +536,109 @@ export async function registerRoutes(app: FastifyInstance) {
     }
     return ok(prediction)
   })
+
+  // ── Rate Trend (xxx data) ──
+  app.get("/api/v1/rate/trend", async (request, reply) => {
+    const query = request.query as { query_type?: string; days?: string }
+    const queryType = (["D", "W", "M"].includes(query.query_type ?? "") ? query.query_type : "M") as "D" | "W" | "M"
+    const days = Math.min(90, Math.max(1, parseInt(query.days ?? "30")))
+
+    try {
+      const result = await fetchRateTrend(queryType, "USD")
+      const dailyData = aggregateDailyRates(result.data).slice(-days)
+      const ma5 = computeMovingAverage(dailyData, 5)
+      const ma10 = computeMovingAverage(dailyData, 10)
+
+      return ok({
+        ccyPair: result.ccyPair,
+        queryType: result.queryType,
+        currentRate: result.currentRate,
+        currentDateTime: result.currentDateTime,
+        data: dailyData,
+        ma5,
+        ma10,
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      reply.status(500)
+      return err(50030, `汇率趋势获取失败: ${msg}`)
+    }
+  })
+
+  // ── Rate Prediction (based on quant engine) ──
+  app.get("/api/v1/rate/prediction", async (request, reply) => {
+    const query = request.query as { symbol?: string; days?: string }
+    const symbol = query.symbol ?? "USDCNH"
+    const days = Math.min(60, Math.max(7, parseInt(query.days ?? "30")))
+
+    try {
+      const quantSignal = await getLatestQuantSignal(symbol)
+      const quantHistory = await getQuantHistory(symbol, days)
+
+      let trendResult = null
+      try {
+        const rateData = await fetchRateTrend("M", "USD")
+        trendResult = aggregateDailyRates(rateData.data).slice(-days)
+      } catch {
+        // rate data unavailable, proceed with quant-only prediction
+      }
+
+      const predictions: { date: string; predicted: number; upper: number; lower: number; confidence: number }[] = []
+
+      if (trendResult && trendResult.length > 0) {
+        const lastRate = trendResult[trendResult.length - 1].rate
+        const direction = quantSignal?.compositeScore ?? 0
+        const confidence = quantSignal?.confidence ?? 0.5
+        const volatility = computeVolatility(trendResult)
+
+        for (let i = 1; i <= 7; i++) {
+          const date = new Date()
+          date.setDate(date.getDate() + i)
+          const drift = direction * 0.0001 * i
+          const predicted = lastRate + drift
+          const spread = volatility * Math.sqrt(i) * 1.96
+          predictions.push({
+            date: date.toISOString().slice(0, 10),
+            predicted: Math.round(predicted * 10000) / 10000,
+            upper: Math.round((predicted + spread) * 10000) / 10000,
+            lower: Math.round((predicted - spread) * 10000) / 10000,
+            confidence: Math.round(confidence * 100) / 100,
+          })
+        }
+      }
+
+      return ok({
+        symbol,
+        historical: trendResult,
+        predictions,
+        quantSignal: quantSignal ? {
+          compositeScore: quantSignal.compositeScore,
+          regime: quantSignal.regime,
+          confidence: quantSignal.confidence,
+          createdAt: quantSignal.createdAt,
+        } : null,
+        quantHistory: quantHistory.map((h: any) => ({
+          compositeScore: h.compositeScore,
+          regime: h.regime,
+          confidence: h.confidence,
+          createdAt: h.createdAt,
+        })),
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      reply.status(500)
+      return err(50031, `汇率预测获取失败: ${msg}`)
+    }
+  })
+}
+
+function computeVolatility(data: { rate: number }[]): number {
+  if (data.length < 2) return 0.001
+  const returns = []
+  for (let i = 1; i < data.length; i++) {
+    returns.push(Math.log(data[i].rate / data[i - 1].rate))
+  }
+  const mean = returns.reduce((s, r) => s + r, 0) / returns.length
+  const variance = returns.reduce((s, r) => s + (r - mean) ** 2, 0) / (returns.length - 1)
+  return Math.sqrt(variance) * data[data.length - 1].rate
 }

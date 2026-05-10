@@ -5,21 +5,37 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onUnmounted } from "vue"
 import * as echarts from "echarts"
+import type { RateTrendData } from "../api/index"
 
-const props = defineProps<{ series?: { close: number; tradeDate: string }[] }>()
+const props = defineProps<{
+  series?: { close: number; tradeDate: string }[]
+  rateTrend?: RateTrendData | null
+}>()
 
 const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
 
 function render() {
-  if (!chartRef.value || !props.series?.length) return
+  if (!chartRef.value) return
+
+  let dates: string[] = []
+  let values: number[] = []
+
+  if (props.rateTrend?.data?.length) {
+    const recent = props.rateTrend.data.slice(-30)
+    dates = recent.map(d => d.date)
+    values = recent.map(d => d.rate)
+  } else if (props.series?.length) {
+    const recent = props.series.slice(-30)
+    dates = recent.map(s => s.tradeDate)
+    values = recent.map(s => s.close)
+  } else {
+    return
+  }
+
   if (!chart) {
     chart = echarts.init(chartRef.value)
   }
-
-  const recent = props.series.slice(-30)
-  const dates = recent.map(s => s.tradeDate)
-  const values = recent.map(s => s.close)
 
   chart.setOption({
     grid: { top: 4, right: 4, bottom: 4, left: 4 },
@@ -49,6 +65,7 @@ function render() {
 }
 
 onMounted(() => render())
+watch(() => props.rateTrend, () => render(), { deep: true })
 watch(() => props.series, () => render(), { deep: true })
 
 onUnmounted(() => {

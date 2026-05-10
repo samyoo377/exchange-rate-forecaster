@@ -290,7 +290,7 @@ const notShowTables = ["ChatSession", "ChatMessage"]
 const cronJobNameMap: Record<string, string> = {
   news_fetch: "新闻抓取",
   news_digest: "新闻消化",
-  auto_prediction: "自动预测",
+  auto_prediction: "AI分析预测",
   quant_analysis: "量化分析",
 }
 

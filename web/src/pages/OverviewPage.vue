@@ -35,7 +35,7 @@
           <PredictionCard :prediction="marketStore.latestPrediction" />
           <div class="sparkline-card">
             <div class="card-title">近期走势</div>
-            <SparklineChart :series="marketStore.series" />
+            <SparklineChart :series="marketStore.series" :rateTrend="marketStore.rateTrend" />
           </div>
           <router-link to="/intelligence" class="news-entry" v-if="marketStore.newsDigest">
             <div class="news-entry-header">
@@ -95,10 +95,11 @@ function sentimentLabel(s: string) {
   align-items: center;
   justify-content: space-between;
   background: #fff;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid #edf2f7;
+  padding: 14px 20px;
   margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 .header-info { display: flex; align-items: center; gap: 12px; }
 .pair-label { font-size: 18px; font-weight: 700; color: #1e293b; }
@@ -106,22 +107,24 @@ function sentimentLabel(s: string) {
 .sidebar-stack { display: flex; flex-direction: column; gap: 16px; }
 .sparkline-card {
   background: #fff;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid #edf2f7;
+  padding: 16px 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 .card-title { font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 8px; }
 .news-entry {
   display: block;
   background: #fff;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid #edf2f7;
+  padding: 16px 20px;
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
-.news-entry:hover { border-color: #2563eb; }
+.news-entry:hover { border-color: #2563eb; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.08); }
 .news-entry-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .news-entry-time { font-size: 11px; color: #94a3b8; }
 .news-entry-title { font-size: 13px; font-weight: 500; color: #1e293b; line-height: 1.5; margin-bottom: 6px; }

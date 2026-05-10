@@ -33,25 +33,33 @@
         <template v-else>
           <div class="signal-overview">
             <div class="score-section">
-              <div class="composite-score" :class="scoreClass">
-                <span class="score-value">
-                  {{ quantStore.latest.compositeScore > 0 ? "+" : "" }}{{ quantStore.latest.compositeScore.toFixed(1) }}
-                </span>
-                <span class="score-label">综合评分</span>
-              </div>
+              <el-tooltip content="所有量化信号的加权综合得分。正值看涨，负值看跌，绝对值越大信号越强" placement="top" :show-after="300">
+                <div class="composite-score" :class="scoreClass">
+                  <span class="score-value">
+                    {{ quantStore.latest.compositeScore > 0 ? "+" : "" }}{{ quantStore.latest.compositeScore.toFixed(1) }}
+                  </span>
+                  <span class="score-label">综合评分</span>
+                </div>
+              </el-tooltip>
               <div class="score-meta">
-                <div class="meta-item">
-                  <span class="meta-label">方向</span>
-                  <span class="meta-value" :class="directionClass">{{ directionLabel }}</span>
-                </div>
-                <div class="meta-item">
-                  <span class="meta-label">市场状态</span>
-                  <span class="meta-value">{{ regimeLabel }}</span>
-                </div>
-                <div class="meta-item">
-                  <span class="meta-label">置信度</span>
-                  <span class="meta-value">{{ (quantStore.latest.confidence * 100).toFixed(0) }}%</span>
-                </div>
+                <el-tooltip content="综合评分判定的市场方向：偏多表示看涨，偏空表示看跌，中性表示方向不明" placement="top" :show-after="300">
+                  <div class="meta-item">
+                    <span class="meta-label">方向</span>
+                    <span class="meta-value" :class="directionClass">{{ directionLabel }}</span>
+                  </div>
+                </el-tooltip>
+                <el-tooltip content="当前市场所处阶段：上升/下降趋势、震荡或高波动，影响策略选择" placement="top" :show-after="300">
+                  <div class="meta-item">
+                    <span class="meta-label">市场状态</span>
+                    <span class="meta-value">{{ regimeLabel }}</span>
+                  </div>
+                </el-tooltip>
+                <el-tooltip content="模型对当前判断的确信程度。越高表示各信号越一致，预测越可靠" placement="top" :show-after="300">
+                  <div class="meta-item">
+                    <span class="meta-label">置信度</span>
+                    <span class="meta-value">{{ (quantStore.latest.confidence * 100).toFixed(0) }}%</span>
+                  </div>
+                </el-tooltip>
               </div>
             </div>
 
@@ -61,17 +69,23 @@
           </div>
 
           <div class="signal-cards">
-            <div
+            <el-tooltip
               v-for="signal in sortedSignals"
               :key="signal.name"
-              class="signal-card"
-              :class="signalCardClass(signal.score)"
+              :content="signalTooltip(signal.name)"
+              placement="top"
+              :show-after="300"
             >
-              <span class="signal-name">{{ signalLabel(signal.name) }}</span>
-              <span class="signal-score" :class="signalScoreClass(signal.score)">
-                {{ signal.score > 0 ? "+" : "" }}{{ signal.score.toFixed(0) }}
-              </span>
-            </div>
+              <div
+                class="signal-card"
+                :class="signalCardClass(signal.score)"
+              >
+                <span class="signal-name">{{ signalLabel(signal.name) }}</span>
+                <span class="signal-score" :class="signalScoreClass(signal.score)">
+                  {{ signal.score > 0 ? "+" : "" }}{{ signal.score.toFixed(0) }}
+                </span>
+              </div>
+            </el-tooltip>
           </div>
 
           <div class="source-status">
@@ -115,6 +129,16 @@ const SIGNAL_LABELS: Record<string, string> = {
   momentum: "动量",
 }
 
+const SIGNAL_TOOLTIPS: Record<string, string> = {
+  maCrossover: "短期均线与长期均线的交叉信号。金叉（短上穿长）看涨，死叉（短下穿长）看跌",
+  bollingerBands: "价格相对布林带上下轨的位置。触及上轨可能超买，触及下轨可能超卖",
+  macd: "趋势动量指标。MACD柱由负转正为买入信号，由正转负为卖出信号",
+  supportResistance: "关键价格支撑位和阻力位。接近支撑位可能反弹，接近阻力位可能回落",
+  volatility: "市场波动剧烈程度。高波动意味着风险和机会并存，低波动可能酝酿突破",
+  meanReversion: "价格偏离均值的程度。偏离过大时倾向于回归均值，可作为反转信号",
+  momentum: "价格变化的速度和力度。正动量表示上涨加速，负动量表示下跌加速",
+}
+
 const REGIME_LABELS: Record<string, string> = {
   trending_up: "上升趋势",
   trending_down: "下降趋势",
@@ -150,6 +174,10 @@ const sortedSignals = computed(() =>
 
 function signalLabel(name: string): string {
   return SIGNAL_LABELS[name] ?? name
+}
+
+function signalTooltip(name: string): string {
+  return SIGNAL_TOOLTIPS[name] ?? `${signalLabel(name)}指标信号`
 }
 
 function signalCardClass(score: number): string {

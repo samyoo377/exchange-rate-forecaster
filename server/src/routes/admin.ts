@@ -613,16 +613,46 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const symbol = query.symbol ?? process.env.DEFAULT_SYMBOL ?? "USDCNH"
     const limit = Math.min(200, Math.max(10, parseInt(query.limit ?? "60")))
     const bars = await getLatestBars(symbol, limit)
-    return ok({
-      bars: bars.map((b) => ({
-        tradeDate: b.tradeDate.toISOString().slice(0, 10),
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-        volume: b.volume ?? null,
-      })),
-    })
+
+    if (bars.length >= 5) {
+      return ok({
+        bars: bars.map((b) => ({
+          tradeDate: b.tradeDate.toISOString().slice(0, 10),
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          volume: b.volume ?? null,
+        })),
+      })
+    }
+
+    try {
+      const { fetchRateTrend, aggregateDailyRates } = await import("../services/market-data/rateFetcher.js")
+      const trend = await fetchRateTrend("M")
+      const daily = aggregateDailyRates(trend.data)
+      return ok({
+        bars: daily.slice(-limit).map((d) => ({
+          tradeDate: d.date,
+          open: d.rate,
+          high: d.rate,
+          low: d.rate,
+          close: d.rate,
+          volume: null,
+        })),
+      })
+    } catch {
+      return ok({
+        bars: bars.map((b) => ({
+          tradeDate: b.tradeDate.toISOString().slice(0, 10),
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          volume: b.volume ?? null,
+        })),
+      })
+    }
   })
 
   // ── Formula preview (evaluate expression against real data) ──

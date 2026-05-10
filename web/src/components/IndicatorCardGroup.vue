@@ -13,13 +13,15 @@
         </template>
         <el-row :gutter="8">
           <el-col :span="colSpan(group.items.length)" v-for="item in group.items" :key="item.label">
-            <div class="ind-item">
-              <div class="ind-label">{{ item.label }}</div>
-              <div class="ind-value" :style="{ color: item.color }">
-                {{ item.value }}
+            <el-tooltip :content="indicatorTooltip(item.label)" placement="top" :show-after="300">
+              <div class="ind-item">
+                <div class="ind-label">{{ item.label }}</div>
+                <div class="ind-value" :style="{ color: item.color }">
+                  {{ item.value }}
+                </div>
+                <el-tag :type="item.signalType" size="small">{{ item.signal }}</el-tag>
               </div>
-              <el-tag :type="item.signalType" size="small">{{ item.signal }}</el-tag>
-            </div>
+            </el-tooltip>
           </el-col>
         </el-row>
       </el-collapse-item>
@@ -146,6 +148,19 @@ const expandedGroups = ref<string[]>([])
 
 const initialGroupKeys = computed(() => groups.value.map((g) => g.key))
 expandedGroups.value = initialGroupKeys.value
+
+const INDICATOR_TOOLTIPS: Record<string, string> = {
+  RSI: "相对强弱指数（14日）：衡量价格涨跌力度。>70 超买可能回调，<30 超卖可能反弹",
+  STOCH: "随机指标：比较收盘价与一段时间内价格区间的位置。>80 超买，<20 超卖",
+  CCI: "商品通道指数（20日）：衡量价格偏离统计均值的程度。>100 超买，<-100 超卖",
+  ADX: "平均趋向指数（14日）：衡量趋势强度（不分方向）。>25 有趋势，<20 无趋势震荡",
+  AO: "动量震荡器：短期动量与长期动量的差值。正值偏多，负值偏空，零轴交叉为信号",
+  MOM: "动量指标（10日）：当前价格与N日前价格的差值。正值上涨动能，负值下跌动能",
+}
+
+function indicatorTooltip(label: string): string {
+  return INDICATOR_TOOLTIPS[label] ?? `${label}：技术分析指标，用于辅助判断市场走势`
+}
 
 function colSpan(count: number) {
   if (count <= 3) return 8

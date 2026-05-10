@@ -332,3 +332,62 @@ export async function getPredictionDetail(id: string): Promise<PredictionResult 
   if (res.data.code !== 0) throw new Error(res.data.message)
   return res.data.data
 }
+
+// ── Rate Data ──
+
+export interface RateDataPoint {
+  date: string
+  rate: number
+}
+
+export interface RateTrendData {
+  ccyPair: string
+  queryType: string
+  currentRate: number
+  currentDateTime: string
+  data: RateDataPoint[]
+  ma5: (number | null)[]
+  ma10: (number | null)[]
+}
+
+export interface RatePredictionPoint {
+  date: string
+  predicted: number
+  upper: number
+  lower: number
+  confidence: number
+}
+
+export interface RatePredictionData {
+  symbol: string
+  historical: RateDataPoint[] | null
+  predictions: RatePredictionPoint[]
+  quantSignal: {
+    compositeScore: number
+    regime: string
+    confidence: number
+    timestamp: string
+  } | null
+  quantHistory: {
+    compositeScore: number
+    regime: string
+    confidence: number
+    timestamp: string
+  }[]
+}
+
+export async function getRateTrend(queryType = "M", days = 30): Promise<RateTrendData | null> {
+  const res = await http.get<ApiResponse<RateTrendData>>(
+    `/api/v1/rate/trend?query_type=${queryType}&days=${days}`,
+  )
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data
+}
+
+export async function getRatePrediction(days = 30): Promise<RatePredictionData | null> {
+  const res = await http.get<ApiResponse<RatePredictionData>>(
+    `/api/v1/rate/prediction?days=${days}`,
+  )
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data
+}

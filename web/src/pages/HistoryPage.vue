@@ -334,25 +334,28 @@ function confidenceColor(c: number) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 .page-title { font-size: 16px; font-weight: 600; color: #1e293b; }
 .header-actions { display: flex; gap: 8px; align-items: center; }
-.section { margin-bottom: 20px; }
+.section { margin-bottom: 24px; }
 
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 14px;
+  margin-bottom: 24px;
 }
 .stat-card {
   background: #fff;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #edf2f7;
+  padding: 18px 16px;
   text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  transition: box-shadow 0.2s;
 }
+.stat-card:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); }
 .stat-number { font-size: 22px; font-weight: 700; color: #1e293b; }
 .stat-label { font-size: 11px; color: #94a3b8; margin-top: 4px; }
 .stat-pct { font-size: 11px; color: #64748b; margin-top: 2px; }
@@ -366,27 +369,29 @@ function confidenceColor(c: number) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 .chart-card {
   background: #fff;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #edf2f7;
+  padding: 18px 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 .chart-title { font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 12px; }
 .chart-body { height: 200px; }
 
 .table-card {
   background: #fff;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #edf2f7;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 .table-filters {
   display: flex;
   gap: 10px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
 }
 

@@ -390,8 +390,14 @@ const fetchLogColumns: ColumnDef[] = [
   { prop: "_detail", label: "详情", width: 70, align: "center", filterable: false, sortable: false },
 ]
 
+const jobNameMap: Record<string, string> = {
+  news_fetch: "新闻抓取",
+  news_digest: "新闻消化",
+  auto_prediction: "AI分析预测",
+}
 function jobLabel(name: string) {
-  return name === "news_fetch" ? "新闻抓取 (5分钟)" : "新闻消化 (30分钟)"
+  console.log('show name', name)
+  return jobNameMap[name]
 }
 
 function statusType(job: CronJobStatus) {
