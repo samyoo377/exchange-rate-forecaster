@@ -322,11 +322,13 @@ export async function registerRoutes(app: FastifyInstance) {
       sessionId?: string
       attachmentIds?: string[]
       history?: { role: "user" | "assistant"; content: string }[]
+      pageContext?: { pageName: string; pageData?: string }
     }
     const message = body?.message?.trim()
     const symbol = body?.symbol ?? process.env.DEFAULT_SYMBOL ?? "USDCNH"
     const horizon = body?.horizon ?? "T+2"
     const attachmentIds = body?.attachmentIds ?? []
+    const pageContext = body?.pageContext
 
     if (!message) {
       reply.status(400)
@@ -380,7 +382,7 @@ export async function registerRoutes(app: FastifyInstance) {
       reply.raw.write(`data: ${JSON.stringify({ thinking: true })}\n\n`)
 
       let fullResponse = ""
-      for await (const chunk of streamChat(message, symbol, horizon, history, attachmentIds)) {
+      for await (const chunk of streamChat(message, symbol, horizon, history, attachmentIds, pageContext)) {
         reply.raw.write(`data: ${JSON.stringify({ content: chunk })}\n\n`)
         fullResponse += chunk
       }

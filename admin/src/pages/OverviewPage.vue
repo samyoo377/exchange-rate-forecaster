@@ -96,7 +96,7 @@
           <template #header>
             <div class="card-header">
               <el-icon :color="job.running ? '#e6a23c' : '#67c23a'"><Timer /></el-icon>
-              <span>{{ job.name === 'news_fetch' ? '新闻抓取' : '新闻消化' }}</span>
+              <span>{{ cronJobNameMap[job.name] ?? job.name }}</span>
               <el-tag :type="job.running ? 'warning' : 'success'" size="small" style="margin-left:auto">
                 {{ job.running ? '运行中' : '空闲' }}
               </el-tag>
@@ -286,6 +286,13 @@ import {
 } from "../api/index"
 
 const notShowTables = ["ChatSession", "ChatMessage"]
+
+const cronJobNameMap: Record<string, string> = {
+  news_fetch: "新闻抓取",
+  news_digest: "新闻消化",
+  auto_prediction: "自动预测",
+  quant_analysis: "量化分析",
+}
 
 const router = useRouter()
 const cronJobs = ref<CronJobStatus[]>([])

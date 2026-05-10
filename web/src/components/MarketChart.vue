@@ -3,7 +3,7 @@
     <template #header>
       <div class="chart-header">
         <span class="card-title">行情 K 线图（USDCNH）</span>
-        <el-radio-group v-model="currentInterval" size="small" @change="onIntervalChange">
+        <el-radio-group v-if="!hideInterval" v-model="currentInterval" size="small" @change="onIntervalChange">
           <el-radio-button value="1h">小时线</el-radio-button>
           <el-radio-button value="4h">4小时线</el-radio-button>
           <el-radio-button value="1d">日线</el-radio-button>
@@ -39,7 +39,7 @@ import type { OhlcBar } from "../types/index"
 
 use([CandlestickChart, LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, MarkLineComponent, CanvasRenderer])
 
-const props = defineProps<{ series: OhlcBar[] }>()
+const props = defineProps<{ series: OhlcBar[]; hideInterval?: boolean }>()
 const emit = defineEmits<{ "interval-change": [interval: string] }>()
 
 const currentInterval = ref("1d")

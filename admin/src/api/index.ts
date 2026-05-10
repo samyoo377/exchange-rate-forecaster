@@ -145,6 +145,7 @@ export function streamAdminChat(
   onSessionId?: (id: string) => void,
   model?: string,
   attachmentIds?: string[],
+  pageContext?: { pageName: string; pageData?: string },
 ): AbortController {
   const controller = new AbortController()
   let hadError = false
@@ -152,7 +153,7 @@ export function streamAdminChat(
   fetch("/api/v1/admin/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, sessionId, model, attachmentIds }),
+    body: JSON.stringify({ message, history, sessionId, model, attachmentIds, pageContext }),
     signal: controller.signal,
   })
     .then(async (res) => {

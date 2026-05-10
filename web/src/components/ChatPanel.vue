@@ -208,6 +208,15 @@ import { uploadFile } from "../api/index"
 import PredictionDetail from "./PredictionDetail.vue"
 import { ElMessage } from "element-plus"
 
+interface Props {
+  pageName?: string
+  pageData?: string
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  pageName: "overview",
+})
+
 const predStore = usePredictionStore()
 const question = ref("")
 const horizon = ref("T+2")
@@ -245,10 +254,11 @@ async function handleFileSelect(e: Event) {
   const input = e.target as HTMLInputElement
   const files = input.files
   if (!files?.length) return
+  const fileArray = Array.from(files)
   input.value = ""
   uploading.value = true
   try {
-    for (const file of Array.from(files)) {
+    for (const file of fileArray) {
       const result = await uploadFile(file)
       predStore.addAttachment(result)
     }
@@ -280,7 +290,8 @@ async function send() {
     historyDraft = ""
   }
   question.value = ""
-  await predStore.askAI(q || "请分析上传的文件内容", "USDCNH", horizon.value)
+  const pageContext = { pageName: props.pageName, pageData: props.pageData }
+  await predStore.askAI(q || "请分析上传的文件内容", "USDCNH", horizon.value, pageContext)
   scrollToBottom()
 }
 

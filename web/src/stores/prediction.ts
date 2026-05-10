@@ -153,7 +153,7 @@ export const usePredictionStore = defineStore("prediction", () => {
     }
   }
 
-  async function askAI(question: string, symbol = "USDCNH", horizon = "T+2") {
+  async function askAI(question: string, symbol = "USDCNH", horizon = "T+2", pageContext?: { pageName: string; pageData?: string }) {
     const attachments = [...pendingAttachments.value]
     const attachmentIds = attachments.map((a) => a.id)
     pendingAttachments.value = []
@@ -194,6 +194,7 @@ export const usePredictionStore = defineStore("prediction", () => {
         sessionId: sessionId.value ?? undefined,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         history,
+        pageContext,
         signal: abortController.value.signal,
         onSessionId(id) {
           setSessionId(id)

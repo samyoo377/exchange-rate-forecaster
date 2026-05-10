@@ -551,6 +551,13 @@ function stopStreaming() {
   if (sessionId.value) setCachedHistory(sessionId.value, messages.value)
 }
 
+function collectPageData(): string {
+  const mainEl = document.querySelector("main") ?? document.querySelector(".admin-content") ?? document.body
+  const text = mainEl.innerText || mainEl.textContent || ""
+  const maxLen = 4000
+  return text.length > maxLen ? text.slice(0, maxLen) + "\n...(已截断)" : text
+}
+
 async function sendMessage(text?: string) {
   const msg = text ?? input.value.trim()
   if (!msg || streaming.value) return
@@ -558,8 +565,6 @@ async function sendMessage(text?: string) {
   sentHistory.value.push(msg)
   historyIndex = -1
   historyDraft = ""
-
-  const contextMsg = `[当前页面: ${currentPageLabel.value}] ${msg}`
 
   messages.value.push({ role: "user", content: msg })
   input.value = ""
@@ -571,8 +576,13 @@ async function sendMessage(text?: string) {
     ? []
     : messages.value.slice(0, -1).map((m) => ({ role: m.role, content: m.content }))
 
+  const pageContext = {
+    pageName: currentPageLabel.value,
+    pageData: collectPageData(),
+  }
+
   activeController = streamAdminChat(
-    contextMsg,
+    msg,
     history,
     (chunk) => {
       streamBuffer.value += chunk
@@ -602,6 +612,8 @@ async function sendMessage(text?: string) {
       setSessionIdValue(id)
     },
     selectedModel.value || undefined,
+    undefined,
+    pageContext,
   )
 }
 

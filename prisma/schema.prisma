@@ -8,30 +8,42 @@ datasource db {
 }
 
 model RawMarketData {
-  id           String   @id @default(cuid())
-  source       String
-  symbol       String
-  payload      String   @db.Text
-  fetchedAt    DateTime
-  status       String
-  errorMessage String?  @db.Text
-  createdAt    DateTime @default(now())
+  id             String   @id @default(cuid())
+  source         String
+  symbol         String
+  payload        String   @db.Text
+  fetchedAt      DateTime
+  status         String
+  errorMessage   String?  @db.Text
+  requestUrl     String?  @db.Text
+  responseStatus Int?
+  datasetVersion String?
+  createdAt      DateTime @default(now())
 }
 
 model NormalizedMarketSnapshot {
-  id           String   @id @default(cuid())
-  symbol       String
-  snapshotDate DateTime
-  open         Float
-  high         Float
-  low          Float
-  close        Float
-  volume       Float?
-  source       String
-  version      String
-  createdAt    DateTime @default(now())
+  id              String   @id @default(cuid())
+  symbol          String
+  snapshotDate    DateTime
+  open            Float
+  high            Float
+  low             Float
+  close           Float
+  volume          Float?
+  source          String
+  version         String
+  interval        String   @default("1d")
+  isSynthetic     Boolean  @default(false)
+  qualityScore    Float    @default(1.0)
+  sourceTraceJson String?  @db.Text
+  canonicalSymbol String?
+  sourceSymbol    String?
+  proxyFor        String?
+  basisRiskLevel  String?
+  createdAt       DateTime @default(now())
 
   @@unique([symbol, snapshotDate, version])
+  @@index([canonicalSymbol, interval, snapshotDate])
 }
 
 model InsightSummary {
@@ -46,19 +58,22 @@ model InsightSummary {
 }
 
 model PredictionResult {
-  id                 String   @id @default(cuid())
-  symbol             String
-  userQuery          String   @db.Text
-  horizon            String
-  direction          String
-  confidence         Float
-  rationale          String   @db.Text
-  riskNotes          String   @db.Text
-  modelVersion       String
-  dataSnapshotRefs   String   @db.Text
-  signalsSnapshot    String?  @db.Text
-  indicatorsSnapshot String?  @db.Text
-  createdAt          DateTime @default(now())
+  id                     String   @id @default(cuid())
+  symbol                 String
+  userQuery              String   @db.Text
+  horizon                String
+  direction              String
+  confidence             Float
+  rationale              String   @db.Text
+  riskNotes              String   @db.Text
+  modelVersion           String
+  dataSnapshotRefs       String   @db.Text
+  signalsSnapshot        String?  @db.Text
+  indicatorsSnapshot     String?  @db.Text
+  quantSignalSnapshotId  String?
+  quantDatasetVersion    String?
+  quantEvidenceJson      String?  @db.Text
+  createdAt              DateTime @default(now())
 
   @@index([symbol, createdAt])
 }
@@ -247,4 +262,71 @@ model DataSourceHealth {
   lastError     String?   @db.Text
   avgLatencyMs  Float     @default(0)
   updatedAt     DateTime  @updatedAt
+}
+
+// ── Feature 5: Strategy Research Tables ──
+
+model StrategyDefinition {
+  id           String   @id @default(cuid())
+  strategyKey  String   @unique
+  displayName  String
+  version      String
+  category     String
+  paramsSchema String?  @db.Text
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  runs         StrategyRun[]
+}
+
+model StrategyRun {
+  id             String   @id @default(cuid())
+  strategyKey    String
+  strategy       StrategyDefinition @relation(fields: [strategyKey], references: [strategyKey])
+  symbol         String
+  interval       String   @default("1d")
+  horizon        String?
+  score          Float
+  confidence     Float
+  direction      String
+  evidenceJson   String?  @db.Text
+  datasetVersion String?
+  runAt          DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([strategyKey, symbol, runAt])
+  @@index([symbol, runAt])
+}
+
+model BacktestRun {
+  id            String   @id @default(cuid())
+  strategyKey   String
+  symbol        String
+  sampleWindow  Int
+  horizon       String
+  hitRate       Float
+  avgReturnBp   Float?
+  maxDrawdownBp Float?
+  sampleCount   Int
+  artifactRef   String?  @db.Text
+  runAt         DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([strategyKey, symbol])
+}
+
+model ForecastEvaluation {
+  id                 String   @id @default(cuid())
+  predictionId       String
+  symbol             String
+  horizon            String
+  predictedDirection String
+  realizedDirection  String?
+  realizedReturnBp   Float?
+  evaluationStatus   String   @default("pending")
+  evaluatedAt        DateTime?
+  createdAt          DateTime @default(now())
+
+  @@index([predictionId])
+  @@index([symbol, evaluationStatus])
 }

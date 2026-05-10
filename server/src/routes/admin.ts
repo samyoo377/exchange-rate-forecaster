@@ -424,12 +424,13 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
   // ── Admin AI chat (SSE stream) with session persistence ──
   app.post("/api/v1/admin/chat/stream", async (req, reply) => {
-    const { message, sessionId: inputSessionId, history, model, attachmentIds } = req.body as {
+    const { message, sessionId: inputSessionId, history, model, attachmentIds, pageContext } = req.body as {
       message: string
       sessionId?: string
       history?: { role: "user" | "assistant"; content: string }[]
       model?: string
       attachmentIds?: string[]
+      pageContext?: { pageName: string; pageData?: string }
     }
 
     if (!message) return err(400, "message is required")
@@ -475,7 +476,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       }
 
       let fullResponse = ""
-      for await (const chunk of streamAdminChat(message, chatHistory, model, attachmentIds ?? [])) {
+      for await (const chunk of streamAdminChat(message, chatHistory, model, attachmentIds ?? [], pageContext)) {
         reply.raw.write(`data: ${JSON.stringify({ content: chunk })}\n\n`)
         fullResponse += chunk
       }

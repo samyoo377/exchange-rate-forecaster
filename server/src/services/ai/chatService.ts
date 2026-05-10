@@ -6,6 +6,9 @@ import { getLatestDigest } from "../news/index.js"
 import { getFileAsBase64, extractTextFromFile, isImageMime } from "../file/fileService.js"
 import { executeDataQuery, AVAILABLE_QUERIES } from "./dataQuery.js"
 import { getLatestQuantSignal } from "../quant/quantEngine.js"
+import { buildQuantBundle } from "../quant/enhancedQuantEngine.js"
+import { buildStructuredQuantContext } from "../quant/quantContextBuilder.js"
+import { buildApiToolDescription } from "./apiRegistry.js"
 import type { OhlcBar, IndicatorValues, SignalResult } from "../../types/index.js"
 
 const ABL_API_BASE_URL = process.env.ABL_API_BASE_URL ?? "https://api.ablai.top"
@@ -63,8 +66,13 @@ async function getRecentPredictions(symbol: string, limit = 5) {
   })
 }
 
-async function buildQuantSection(symbol: string): Promise<string> {
+async function buildQuantSection(symbol: string, horizon: string): Promise<string> {
   try {
+    const bundle = await buildQuantBundle(symbol, horizon)
+    if (bundle) {
+      return `\n\n${buildStructuredQuantContext(bundle)}`
+    }
+
     const quant = await getLatestQuantSignal(symbol)
     if (!quant) return ""
 
@@ -95,9 +103,27 @@ ${signals}`
   }
 }
 
-export async function buildRAGContext(symbol: string, horizon: string): Promise<string> {
-  const bars = await getLatestBars(symbol, 60)
-  if (bars.length < 2) return "数据不足，暂无行情数据可供分析。"
+export interface PageContext {
+  pageName: string
+  pageData?: string
+}
+
+export async function buildRAGContext(symbol: string, horizon: string, pageContext?: PageContext): Promise<string> {
+  let bars: OhlcBar[] = []
+  try {
+    bars = await getLatestBars(symbol, 60)
+  } catch {
+    // database may not have interval column yet — graceful fallback
+  }
+
+  if (bars.length < 2) {
+    const pageCtxStr = pageContext ? `\n\n## 当前用户页面上下文\n页面: ${pageContext.pageName}${pageContext.pageData ? `\n页面数据:\n${pageContext.pageData}` : ""}` : ""
+    const quantSection = await buildQuantSection(symbol, horizon)
+    if (quantSection) {
+      return `数据不足，暂无K线行情数据。请使用 call_server_api 或 query_data 工具获取最新数据。${quantSection}${pageCtxStr}`
+    }
+    return `数据不足，暂无行情数据可供分析。请使用 query_data 工具查询数据，或使用 call_server_api 调用 GET /api/v1/dashboard/latest?symbol=USDCNH 获取最新行情。${pageCtxStr}`
+  }
 
   const indSeries = await computeIndicatorSeriesFromConfig(bars)
   const latestInd = indSeries[bars.length - 1]
@@ -154,7 +180,7 @@ ${formatIndicators(latestInd)}
 ${formatSignals(signals)}
 
 ## 近期预测历史
-${predHistory}${newsSection}${await buildQuantSection(symbol)}`
+${predHistory}${newsSection}${await buildQuantSection(symbol, horizon)}${pageContext ? `\n\n## 当前用户页面上下文\n页面: ${pageContext.pageName}${pageContext.pageData ? `\n页面数据:\n${pageContext.pageData}` : ""}` : ""}`
 }
 
 const SYSTEM_PROMPT = `你是一个专业的外汇市场分析助手，专注于USD/CNH（美元兑离岸人民币）汇率分析和预测。
@@ -162,12 +188,14 @@ const SYSTEM_PROMPT = `你是一个专业的外汇市场分析助手，专注于
 你的职责：
 1. 基于提供的实时行情数据和技术指标，给出专业的市场分析
 2. 结合RSI、Stochastic、CCI、ADX、AO、MOM等技术指标进行综合研判
-3. 结合量化引擎的综合评分和多因子信号，给出更全面的方向判断
-4. 给出明确的方向判断（偏升/偏贬/震荡）和置信度评估
-5. 解释分析逻辑，让用户理解判断依据
-6. 如果有消息面摘要，在技术面分析之后附上简短的消息面解读作为辅助参考
-7. 如果用户上传了图片或文件，结合上传内容和市场数据进行分析
-8. 当用户询问历史数据、统计信息或需要查询数据库时，使用提供的数据查询工具获取数据
+3. 结合量化引擎的综合评分和多因子策略信号，给出更全面的方向判断
+4. 量化引擎包含7大策略：均线交叉、MACD、动量、均值回归、布林带、支撑阻力、波动率状态
+5. 给出明确的方向判断（偏升/偏贬/震荡）和置信度评估
+6. 解释分析逻辑，让用户理解判断依据
+7. 如果有消息面摘要，在技术面分析之后附上简短的消息面解读作为辅助参考
+8. 如果用户上传了图片或文件，结合上传内容和市场数据进行分析
+9. 当用户询问历史数据、统计信息或需要查询数据库时，使用提供的数据查询工具获取数据
+10. 注意数据质量标注：合成数据(isSynthetic)和代理数据(proxyFor)的策略结论需谨慎参考
 
 分析规则：
 - RSI < 30 且上拐 → 超卖反弹信号（偏多）
@@ -178,6 +206,8 @@ const SYSTEM_PROMPT = `你是一个专业的外汇市场分析助手，专注于
 - ADX < 20 表示弱趋势/震荡，技术信号可信度降低
 - AO 正值且上升 → 偏多，负值且下降 → 偏空
 - MOM > 0 → 偏多，< 0 → 偏空
+- 量化引擎综合评分 > +20 → 偏多，< -20 → 偏空，中间为中性
+- 数据质量分 < 50% 时，策略结论仅供参考
 
 回答要求：
 - 使用中文回答
@@ -185,7 +215,10 @@ const SYSTEM_PROMPT = `你是一个专业的外汇市场分析助手，专注于
 - 以技术面为主，消息面为辅。技术分析结束后，如有消息面数据，用"📰 消息面参考"小节简要概括（2-3句）
 - 标注置信度和风险提示
 - 不构成交易建议，仅作策略辅助参考
-- 当需要查询更多数据时，主动使用 query_data 工具`
+- 当需要查询更多数据时，主动使用 query_data 工具
+- 当用户询问实时行情、最新量化分析、数据源状态等信息时，使用 call_server_api 工具调用服务端接口获取最新数据
+- 如果上下文中的数据不足以回答用户问题，必须先调用工具获取数据再回答，不要凭空推测
+- 可以组合使用多个工具调用来获取完整信息`
 
 async function buildMultimodalUserContent(
   userMessage: string,
@@ -226,8 +259,9 @@ export async function buildChatMessages(
   horizon: string,
   conversationHistory: { role: string; content: string }[] = [],
   attachmentIds: string[] = [],
+  pageContext?: PageContext,
 ): Promise<ChatMessage[]> {
-  const ragContext = await buildRAGContext(symbol, horizon)
+  const ragContext = await buildRAGContext(symbol, horizon, pageContext)
 
   const userContent = await buildMultimodalUserContent(userMessage, attachmentIds)
 
@@ -252,7 +286,7 @@ const TOOLS = [
     type: "function" as const,
     function: {
       name: "query_data",
-      description: "查询数据库中的市场数据、预测历史、指标值、新闻摘要或统计信息。仅支持只读查询。",
+      description: "查询数据库中的市场数据、预测历史、指标值、新闻摘要、量化信号或统计信息。当需要获取数据来回答用户问题时，主动调用此工具。",
       parameters: {
         type: "object",
         properties: {
@@ -270,7 +304,66 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "call_server_api",
+      description: buildApiToolDescription(),
+      parameters: {
+        type: "object",
+        properties: {
+          method: {
+            type: "string",
+            enum: ["GET", "POST", "PUT", "DELETE"],
+            description: "HTTP 方法",
+          },
+          path: {
+            type: "string",
+            description: "API 路径，如 /api/v1/quant/bundle?symbol=USDCNH",
+          },
+          body: {
+            type: "object",
+            description: "请求体 (POST/PUT 时需要)",
+          },
+        },
+        required: ["method", "path"],
+      },
+    },
+  },
 ]
+
+const SERVER_PORT = process.env.PORT ?? "4001"
+const ALLOWED_API_PREFIXES = ["/api/v1/"]
+
+async function executeServerApiCall(args: { method: string; path: string; body?: unknown }): Promise<string> {
+  const { method, path, body } = args
+
+  if (!ALLOWED_API_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+    return JSON.stringify({ error: `不允许访问路径: ${path}` })
+  }
+
+  const url = `http://127.0.0.1:${SERVER_PORT}${path}`
+  const hasBody = (method === "POST" || method === "PUT") && body
+
+  const response = await fetch(url, {
+    method: method ?? "GET",
+    headers: { "Content-Type": "application/json" },
+    ...(hasBody ? { body: JSON.stringify(body) } : {}),
+  })
+
+  const data = await response.json()
+  const trimmed = JSON.stringify(data, null, 2)
+
+  if (trimmed.length > 8000) {
+    return JSON.stringify({
+      ...data,
+      _truncated: true,
+      _note: "响应已截断，仅保留前8000字符",
+    }).slice(0, 8000)
+  }
+
+  return trimmed
+}
 
 export async function* streamChat(
   userMessage: string,
@@ -278,6 +371,7 @@ export async function* streamChat(
   horizon: string,
   conversationHistory: { role: string; content: string }[] = [],
   attachmentIds: string[] = [],
+  pageContext?: PageContext,
 ): AsyncGenerator<string> {
   const messages = await buildChatMessages(
     userMessage,
@@ -285,10 +379,11 @@ export async function* streamChat(
     horizon,
     conversationHistory,
     attachmentIds,
+    pageContext,
   )
 
   let currentMessages = [...messages]
-  const maxToolRounds = 3
+  const maxToolRounds = 5
   let toolRound = 0
 
   while (true) {
@@ -368,11 +463,16 @@ export async function* streamChat(
     toolRound++
     let toolResult: string
     try {
-      const args = JSON.parse(toolCallArgs || "{}")
-      const queryType = args.query_type ?? toolCallName.replace("query_data_", "")
-      const queryParams = args.params ?? args
-      const result = await executeDataQuery(queryType, queryParams)
-      toolResult = JSON.stringify(result, null, 2)
+      const args = JSON.parse(toolCallArgs || "")
+
+      if (toolCallName === "call_server_api") {
+        toolResult = await executeServerApiCall(args)
+      } else {
+        const queryType = args.query_type ?? toolCallName.replace("query_data_", "")
+        const queryParams = args.params ?? args
+        const result = await executeDataQuery(queryType, queryParams)
+        toolResult = JSON.stringify(result, null, 2)
+      }
     } catch (e) {
       toolResult = JSON.stringify({ error: e instanceof Error ? e.message : String(e) })
     }

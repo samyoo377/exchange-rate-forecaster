@@ -1,5 +1,8 @@
 import { prisma } from "../../utils/db.js"
 import { getFileAsBase64, isImageMime, extractTextFromFile } from "../file/fileService.js"
+import { buildApiToolDescription } from "./apiRegistry.js"
+import { executeDataQuery, AVAILABLE_QUERIES } from "./dataQuery.js"
+import type { PageContext } from "./chatService.js"
 
 const ABL_API_BASE_URL = process.env.ABL_API_BASE_URL ?? "https://api.ablai.top"
 const ABL_API_TOKEN = process.env.ABL_API_TOKEN ?? ""
@@ -122,89 +125,242 @@ export async function buildAdminContext(): Promise<string> {
   return `当前数据库统计:\n${lines}`
 }
 
+const SERVER_PORT = process.env.PORT ?? "4001"
+const ALLOWED_API_PREFIXES = ["/api/v1/"]
+
+const ADMIN_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "query_data",
+      description: "查询数据库中的市场数据、预测历史、指标值、新闻摘要、量化信号或统计信息。",
+      parameters: {
+        type: "object",
+        properties: {
+          query_type: {
+            type: "string",
+            enum: AVAILABLE_QUERIES.map((q) => q.name),
+            description: AVAILABLE_QUERIES.map((q) => `${q.name}: ${q.description}`).join("; "),
+          },
+          params: {
+            type: "object",
+            description: "查询参数，根据 query_type 不同而不同",
+          },
+        },
+        required: ["query_type"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "call_server_api",
+      description: buildApiToolDescription(),
+      parameters: {
+        type: "object",
+        properties: {
+          method: {
+            type: "string",
+            enum: ["GET", "POST", "PUT", "DELETE"],
+            description: "HTTP 方法",
+          },
+          path: {
+            type: "string",
+            description: "API 路径，如 /api/v1/admin/tables",
+          },
+          body: {
+            type: "object",
+            description: "请求体 (POST/PUT 时需要)",
+          },
+        },
+        required: ["method", "path"],
+      },
+    },
+  },
+]
+
+async function executeAdminServerApiCall(args: { method: string; path: string; body?: unknown }): Promise<string> {
+  const { method, path, body } = args
+
+  if (!ALLOWED_API_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+    return JSON.stringify({ error: `不允许访问路径: ${path}` })
+  }
+
+  const url = `http://127.0.0.1:${SERVER_PORT}${path}`
+  const hasBody = (method === "POST" || method === "PUT") && body
+
+  const response = await fetch(url, {
+    method: method ?? "GET",
+    headers: { "Content-Type": "application/json" },
+    ...(hasBody ? { body: JSON.stringify(body) } : {}),
+  })
+
+  const data = await response.json()
+  const trimmed = JSON.stringify(data, null, 2)
+
+  if (trimmed.length > 8000) {
+    return JSON.stringify({
+      ...data,
+      _truncated: true,
+      _note: "响应已截断，仅保留前8000字符",
+    }).slice(0, 8000)
+  }
+
+  return trimmed
+}
+
 export async function* streamAdminChat(
   userMessage: string,
   conversationHistory: ChatMessage[] = [],
   modelOverride?: string,
   attachmentIds: string[] = [],
+  pageContext?: PageContext,
 ): AsyncGenerator<string> {
   const context = await buildAdminContext()
   const modelId = modelOverride || ADMIN_MODEL_ID
 
   const userContent = await buildAdminUserContent(userMessage, attachmentIds)
 
+  const pageCtxStr = pageContext
+    ? `\n\n## 当前用户页面上下文\n页面: ${pageContext.pageName}${pageContext.pageData ? `\n页面数据:\n${pageContext.pageData}` : ""}`
+    : ""
+
   const messages: ChatMessage[] = [
-    { role: "system", content: `${ADMIN_SYSTEM_PROMPT}\n\n${context}` },
+    { role: "system", content: `${ADMIN_SYSTEM_PROMPT}\n\n${context}${pageCtxStr}` },
     ...conversationHistory,
     { role: "user", content: userContent },
   ]
 
-  const response = await fetch(`${ABL_API_BASE_URL}/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${ABL_API_TOKEN}`,
-    },
-    body: JSON.stringify({
-      model: modelId,
-      messages,
-      stream: true,
-      temperature: 0.3,
-      max_tokens: 4096,
-    }),
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Admin AI API failed (${response.status}): ${text}`)
-  }
-
-  const reader = response.body?.getReader()
-  if (!reader) throw new Error("无法读取响应流")
-
-  const decoder = new TextDecoder()
-  let buffer = ""
-  let fullResponse = ""
+  let currentMessages = [...messages]
+  const maxToolRounds = 5
+  let toolRound = 0
 
   while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
+    const useTools = toolRound < maxToolRounds
 
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
+    const response = await fetch(`${ABL_API_BASE_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ABL_API_TOKEN}`,
+      },
+      body: JSON.stringify({
+        model: modelId,
+        messages: currentMessages,
+        stream: true,
+        temperature: 0.3,
+        max_tokens: 4096,
+        ...(useTools ? { tools: ADMIN_TOOLS, tool_choice: "auto" } : {}),
+      }),
+    })
 
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed || !trimmed.startsWith("data: ")) continue
-      const data = trimmed.slice(6)
-      if (data === "[DONE]") break
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`Admin AI API failed (${response.status}): ${text}`)
+    }
 
-      try {
-        const parsed = JSON.parse(data)
-        const content = parsed.choices?.[0]?.delta?.content
-        if (content) {
-          fullResponse += content
-          yield content
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error("无法读取响应流")
+
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let fullResponse = ""
+    let hasToolCall = false
+    let toolCallId = ""
+    let toolCallName = ""
+    let toolCallArgs = ""
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || !trimmed.startsWith("data: ")) continue
+        const data = trimmed.slice(6)
+        if (data === "[DONE]") continue
+
+        try {
+          const parsed = JSON.parse(data)
+          const choice = parsed.choices?.[0]
+          if (!choice) continue
+
+          const delta = choice.delta
+          if (delta?.content) {
+            fullResponse += delta.content
+            yield delta.content
+          }
+
+          if (delta?.tool_calls) {
+            hasToolCall = true
+            for (const tc of delta.tool_calls) {
+              if (tc.id) toolCallId = tc.id
+              if (tc.function?.name) toolCallName = tc.function.name
+              if (tc.function?.arguments) toolCallArgs += tc.function.arguments
+            }
+          }
+        } catch {
+          // skip malformed chunks
         }
-      } catch {
-        // skip
       }
     }
-  }
 
-  // check if the response contains a query block, execute it, and stream the result explanation
-  const queryMatch = fullResponse.match(/```query\s*\n([\s\S]*?)\n```/)
-  if (queryMatch) {
-    try {
-      const queryDef = JSON.parse(queryMatch[1])
-      const result = await executeQuery(queryDef)
-      const resultStr = JSON.stringify(result, null, 2)
-
-      yield "\n\n---\n**查询结果：**\n```json\n" + resultStr + "\n```\n"
-    } catch (e) {
-      yield `\n\n查询执行失败: ${(e as Error).message}`
+    if (!hasToolCall) {
+      // fallback: check for legacy ```query block in response
+      const queryMatch = fullResponse.match(/```query\s*\n([\s\S]*?)\n```/)
+      if (queryMatch) {
+        try {
+          const queryDef = JSON.parse(queryMatch[1])
+          const result = await executeQuery(queryDef)
+          const resultStr = JSON.stringify(result, null, 2)
+          yield "\n\n---\n**查询结果：**\n```json\n" + resultStr + "\n```\n"
+        } catch (e) {
+          yield `\n\n查询执行失败: ${(e as Error).message}`
+        }
+      }
+      break
     }
+
+    toolRound++
+    let toolResult: string
+    try {
+      const args = JSON.parse(toolCallArgs || "{}")
+
+      if (toolCallName === "call_server_api") {
+        toolResult = await executeAdminServerApiCall(args)
+      } else {
+        const queryType = args.query_type ?? toolCallName.replace("query_data_", "")
+        const queryParams = args.params ?? args
+        const result = await executeDataQuery(queryType, queryParams)
+        toolResult = JSON.stringify(result, null, 2)
+      }
+    } catch (e) {
+      toolResult = JSON.stringify({ error: e instanceof Error ? e.message : String(e) })
+    }
+
+    currentMessages.push({
+      role: "assistant",
+      content: null as unknown as string,
+      tool_calls: [{
+        id: toolCallId,
+        type: "function",
+        function: { name: toolCallName, arguments: toolCallArgs },
+      }],
+    } as unknown as ChatMessage)
+
+    currentMessages.push({
+      role: "tool",
+      content: toolResult,
+      tool_call_id: toolCallId,
+    } as unknown as ChatMessage)
+
+    toolCallId = ""
+    toolCallName = ""
+    toolCallArgs = ""
   }
 }
 

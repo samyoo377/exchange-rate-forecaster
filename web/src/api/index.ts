@@ -106,6 +106,7 @@ export interface ChatStreamOptions {
   sessionId?: string
   attachmentIds?: string[]
   history?: { role: "user" | "assistant"; content: string }[]
+  pageContext?: { pageName: string; pageData?: string }
   onChunk: (content: string) => void
   onThinking?: () => void
   onError?: (error: string) => void
@@ -117,13 +118,13 @@ export interface ChatStreamOptions {
 export async function streamChatMessage(opts: ChatStreamOptions) {
   const {
     message, symbol = "USDCNH", horizon = "T+2", sessionId, attachmentIds,
-    history = [], onChunk, onThinking, onError, onDone, onSessionId, signal,
+    history = [], pageContext, onChunk, onThinking, onError, onDone, onSessionId, signal,
   } = opts
 
   const response = await fetch("/api/v1/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, symbol, horizon, sessionId, attachmentIds, history }),
+    body: JSON.stringify({ message, symbol, horizon, sessionId, attachmentIds, history, pageContext }),
     signal,
   })
 
