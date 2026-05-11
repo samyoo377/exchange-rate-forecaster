@@ -10,6 +10,21 @@ export const router = createRouter({
       component: () => import("../pages/OverviewPage.vue"),
     },
     {
+      path: "/market",
+      name: "MarketAnalysis",
+      component: () => import("../pages/MarketAnalysisPage.vue"),
+    },
+    {
+      path: "/intelligence",
+      name: "Intelligence",
+      component: () => import("../pages/IntelligencePage.vue"),
+    },
+    {
+      path: "/review",
+      name: "Review",
+      component: () => import("../pages/ReviewPage.vue"),
+    },
+    {
       path: "/cron",
       name: "CronJobs",
       component: () => import("../pages/CronJobsPage.vue"),

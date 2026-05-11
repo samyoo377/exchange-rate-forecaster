@@ -12,3 +12,4 @@ ai-config.ts
 server/uploads/
 server/scripts/fetch_rate_dataf.js
 server/scripts/examples/
+docs/

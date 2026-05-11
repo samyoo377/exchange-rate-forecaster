@@ -655,6 +655,36 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     }
   })
 
+  // ── Rate trend data (daily aggregated from external API) ──
+  app.get("/api/v1/admin/market-data/rate-trend", async (req) => {
+    const query = req.query as { days?: string; queryType?: string }
+    const days = Math.min(90, Math.max(7, parseInt(query.days ?? "30")))
+    const queryType = (query.queryType ?? "M") as "D" | "W" | "M"
+
+    try {
+      const { fetchRateTrend, aggregateDailyRates } = await import("../services/market-data/rateFetcher.js")
+      const trend = await fetchRateTrend(queryType)
+      const daily = aggregateDailyRates(trend.data)
+      return ok({
+        ccyPair: trend.ccyPair,
+        currentRate: trend.currentRate,
+        currentDateTime: trend.currentDateTime,
+        data: daily.slice(-days),
+      })
+    } catch (e) {
+      const bars = await getLatestBars(process.env.DEFAULT_SYMBOL ?? "USDCNH", days)
+      return ok({
+        ccyPair: "USD/CNH",
+        currentRate: bars.length > 0 ? bars[bars.length - 1].close : null,
+        currentDateTime: new Date().toISOString(),
+        data: bars.map((b) => ({
+          date: b.tradeDate.toISOString().slice(0, 10),
+          rate: b.close,
+        })),
+      })
+    }
+  })
+
   // ── Formula preview (evaluate expression against real data) ──
   app.post("/api/v1/admin/indicator-configs/preview-formula", async (req, reply) => {
     const { expression, params, timeframe } = req.body as {

@@ -75,7 +75,7 @@ export interface DigestDetail {
   headline: string
   summary: string
   sentiment: string
-  keyFactors: { factor: string; direction: string; detail: string; heat?: number }[]
+  keyFactors: { factor: string; direction: string; detail: string; heat?: number; score?: number; confidence?: number }[]
   modelVersion: string
   rawItems: DigestRawItem[]
   rawItemCount: number
@@ -397,6 +397,24 @@ export async function getIndicatorCategories(): Promise<CategoryNode[]> {
   return unwrap(await http.get("/api/v1/admin/indicator-categories"))
 }
 
+// ── Rate Trend ──
+
+export interface RateTrendPoint {
+  date: string
+  rate: number
+}
+
+export interface RateTrendData {
+  ccyPair: string
+  currentRate: number | null
+  currentDateTime: string
+  data: RateTrendPoint[]
+}
+
+export async function getRateTrend(days = 30, queryType = "M"): Promise<RateTrendData> {
+  return unwrap(await http.get(`/api/v1/admin/market-data/rate-trend?days=${days}&queryType=${queryType}`))
+}
+
 // ── Cron Latest Output ──
 
 export async function getLatestCronOutput(taskType: string): Promise<any> {
@@ -424,7 +442,7 @@ export interface NewsDigestDetail {
   symbol: string
   headline: string
   summary: string
-  keyFactors: { factor: string; direction: string; detail: string; heat?: number }[]
+  keyFactors: { factor: string; direction: string; detail: string; heat?: number; score?: number; confidence?: number }[]
   sentiment: string
   rawItemIds: string
   modelVersion: string
