@@ -3,46 +3,8 @@
     <h2 class="page-title">概览</h2>
 
     <el-row :gutter="16" class="section">
-      <el-col :xs="24" :sm="8">
-        <el-card shadow="hover" class="metric-card">
-          <div class="metric-icon tech-bg">📊</div>
-          <div class="metric-body">
-            <div class="metric-label">技术面信号</div>
-            <template v-if="dashData">
-              <el-tag :type="techSentiment.type" effect="dark">{{ techSentiment.label }}</el-tag>
-            </template>
-            <span v-else class="metric-empty">暂无</span>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :sm="8">
-        <el-card shadow="hover" class="metric-card">
-          <div class="metric-icon news-bg">📰</div>
-          <div class="metric-body">
-            <div class="metric-label">消息面研判</div>
-            <template v-if="latestDigest">
-              <el-tag :type="sentimentType(latestDigest.sentiment)" effect="dark">
-                {{ sentimentLabel(latestDigest.sentiment) }}
-              </el-tag>
-            </template>
-            <span v-else class="metric-empty">暂无</span>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :sm="8">
-        <el-card shadow="hover" class="metric-card">
-          <div class="metric-icon pred-bg">🎯</div>
-          <div class="metric-body">
-            <div class="metric-label">综合预测</div>
-            <template v-if="dashData?.latestPrediction">
-              <span :class="['direction-text', dashData.latestPrediction.direction]">
-                {{ directionText(dashData.latestPrediction.direction) }}
-              </span>
-              <span class="conf-badge">{{ Math.round(dashData.latestPrediction.confidence * 100) }}%</span>
-            </template>
-            <span v-else class="metric-empty">暂无</span>
-          </div>
-        </el-card>
+      <el-col :span="24">
+        <PredictionPanel :prediction="dashData?.latestPrediction ?? null" />
       </el-col>
     </el-row>
 
@@ -97,14 +59,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue"
+import { ref, onMounted, onUnmounted } from "vue"
 import { useRouter } from "vue-router"
 import {
-  getCronStatus, getTableList, getLatestDigest, getDashboardData,
-  type CronJobStatus, type TableInfo, type NewsDigestDetail, type DashboardData,
+  getCronStatus, getTableList, getDashboardData,
+  type CronJobStatus, type TableInfo, type DashboardData,
 } from "../api/index"
-
-type TagType = "success" | "danger" | "warning" | "info"
+import PredictionPanel from "../components/PredictionPanel.vue"
 
 const notShowTables = ["ChatSession", "ChatMessage"]
 const cronJobNameMap: Record<string, string> = {
@@ -117,35 +78,8 @@ const cronJobNameMap: Record<string, string> = {
 const router = useRouter()
 const cronJobs = ref<CronJobStatus[]>([])
 const tables = ref<TableInfo[]>([])
-const latestDigest = ref<NewsDigestDetail | null>(null)
 const dashData = ref<DashboardData | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
-
-const techSentiment = computed(() => {
-  if (!dashData.value) return { label: "—", type: "info" as TagType }
-  const ind = dashData.value.indicators
-  const signals = [
-    ind.rsi14 != null && ind.rsi14 < 30,
-    ind.stochK != null && ind.stochK < 20,
-    ind.ao != null && ind.ao > 0,
-    ind.mom10 != null && ind.mom10 > 0,
-  ]
-  const bearSignals = [
-    ind.rsi14 != null && ind.rsi14 > 70,
-    ind.stochK != null && ind.stochK > 80,
-    ind.ao != null && ind.ao < 0,
-    ind.mom10 != null && ind.mom10 < 0,
-  ]
-  const bull = signals.filter(Boolean).length
-  const bear = bearSignals.filter(Boolean).length
-  if (bull > bear + 1) return { label: "偏多", type: "success" as TagType }
-  if (bear > bull + 1) return { label: "偏空", type: "danger" as TagType }
-  return { label: "中性", type: "info" as TagType }
-})
-
-function sentimentType(s: string) { return s === "bullish" ? "warning" : s === "bearish" ? "success" : "info" }
-function sentimentLabel(s: string) { return s === "bullish" ? "看涨美元" : s === "bearish" ? "看跌美元" : "中性" }
-function directionText(d: string) { return d === "bullish" ? "看多" : d === "bearish" ? "看空" : "震荡" }
 
 function formatTime(t: string | null) {
   if (!t) return "-"
@@ -161,7 +95,6 @@ async function refresh() {
     const [crons, tbls] = await Promise.all([getCronStatus(), getTableList()])
     cronJobs.value = crons
     tables.value = tbls.filter((t) => !notShowTables.includes(t.name))
-    try { const d = await getLatestDigest(); if (d) latestDigest.value = d } catch {}
     try { const d = await getDashboardData(); if (d) dashData.value = d } catch {}
   } catch {}
 }
@@ -178,49 +111,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .overview { max-width: 1200px; }
 .page-title { font-size: 20px; font-weight: 700; margin-bottom: 20px; color: #303133; }
 .section { margin-bottom: 16px; }
-
-.metric-card {
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.metric-card :deep(.el-card__body) {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.metric-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  flex-shrink: 0;
-}
-
-.tech-bg { background: #ecf5ff; }
-.news-bg { background: #fef0f0; }
-.pred-bg { background: #f0f9eb; }
-
-.metric-body { display: flex; flex-direction: column; gap: 4px; }
-.metric-label { font-size: 12px; color: #909399; }
-.metric-empty { font-size: 12px; color: #c0c4cc; }
-
-.direction-text { font-size: 16px; font-weight: 700; }
-.direction-text.bullish { color: #67c23a; }
-.direction-text.bearish { color: #f56c6c; }
-.direction-text.neutral { color: #909399; }
-
-.conf-badge {
-  font-size: 11px;
-  color: #909399;
-  margin-left: 4px;
-}
 
 .status-card { border-radius: 10px; }
 

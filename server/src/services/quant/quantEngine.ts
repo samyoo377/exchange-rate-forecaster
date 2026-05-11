@@ -1,11 +1,25 @@
 import { prisma } from "../../utils/db.js"
 import { fetchBars } from "./dataAggregator.js"
 import { computeCompositeScore } from "./compositeScorer.js"
+import { upsertSnapshots } from "../market-data/alphaProvider.js"
 import type { CompositeResult } from "./types.js"
 
 export async function runQuantAnalysis(symbol = "USDCNH"): Promise<CompositeResult> {
   const bars = await fetchBars(symbol, 120)
   const result = computeCompositeScore(bars)
+
+  const ohlcBars = bars.map((b) => ({
+    symbol,
+    tradeDate: b.date,
+    open: b.open,
+    high: b.high,
+    low: b.low,
+    close: b.close,
+    volume: b.volume,
+    source: b.source ?? "yahoo_finance",
+    version: `quant-${symbol}-${new Date().toISOString().slice(0, 10)}`,
+  }))
+  await upsertSnapshots(ohlcBars).catch(() => {})
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)

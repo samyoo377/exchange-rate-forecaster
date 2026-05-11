@@ -1,6 +1,8 @@
 import { prisma } from "../../utils/db.js"
 import { computeIndicatorSeriesFromConfig } from "../indicators/calculator.js"
-import { computeSignalsFromConfig, buildPredictionFromConfig } from "../prediction/engine.js"
+import { computeSignalsFromConfig } from "../prediction/engine.js"
+import { computeUnifiedPrediction } from "../prediction/unifiedScorer.js"
+import { generateAiAnalysis } from "../prediction/aiAnalyzer.js"
 import type { OhlcBar, PredictionOutput } from "../../types/index.js"
 
 export type Interval = "1h" | "4h" | "1d"
@@ -129,6 +131,27 @@ export async function getDashboard(symbol: string, interval: Interval = "1d") {
     ...indicatorSeries[i],
   }))
 
+  const prev = bars.length >= 2 ? indicatorSeries[bars.length - 2] : undefined
+  const signals = await computeSignalsFromConfig(latest, prev)
+  const unified = await computeUnifiedPrediction(symbol, latest, signals)
+
+  const recentPreds = await prisma.predictionResult.findMany({
+    where: { symbol },
+    orderBy: { createdAt: "desc" },
+    take: 7,
+    select: { direction: true, confidence: true, createdAt: true, quantEvidenceJson: true },
+  })
+
+  const recentHistory = recentPreds.reverse().map((p) => {
+    const evidence = p.quantEvidenceJson ? JSON.parse(p.quantEvidenceJson) : null
+    return {
+      date: p.createdAt.toISOString(),
+      direction: p.direction,
+      confidence: p.confidence,
+      compositeScore: evidence?.compositeScore ?? 0,
+    }
+  })
+
   return {
     symbol,
     interval,
@@ -137,9 +160,15 @@ export async function getDashboard(symbol: string, interval: Interval = "1d") {
     indicators: latest,
     latestPrediction: latestPred
       ? {
-          direction: latestPred.direction,
-          confidence: latestPred.confidence,
+          direction: unified.direction,
+          confidence: unified.confidence,
           horizon: latestPred.horizon,
+          compositeScore: unified.compositeScore,
+          generatedAt: latestPred.createdAt.toISOString(),
+          breakdown: unified.breakdown,
+          rationale: unified.rationale,
+          dataFreshness: unified.dataFreshness,
+          recentHistory,
         }
       : null,
   }
@@ -162,7 +191,33 @@ export async function runPrediction(
   const sourceRefs = [...new Set(bars.map((b) => b.source))]
   const snapshotVersion = latestBar.version
 
-  const output = await buildPredictionFromConfig(symbol, horizon, userQuery, ind, signals, sourceRefs, snapshotVersion)
+  const unified = await computeUnifiedPrediction(symbol, ind, signals)
+
+  const aiAnalysis = await generateAiAnalysis({
+    symbol,
+    horizon,
+    direction: unified.direction,
+    compositeScore: unified.compositeScore,
+    indicators: ind,
+    signals,
+    quantScore: unified.breakdown.quant.score,
+    quantRegime: unified.breakdown.quant.regime,
+    newsHeadline: unified.breakdown.news.headline || null,
+    newsSentiment: unified.breakdown.news.sentiment,
+    newsFactors: unified.breakdown.news.topFactors,
+  })
+
+  const output: PredictionOutput = {
+    symbol,
+    horizon,
+    direction: unified.direction,
+    confidence: unified.confidence,
+    rationale: aiAnalysis.rationale,
+    riskNotes: aiAnalysis.riskNotes,
+    sourceRefs,
+    generatedAt: new Date().toISOString(),
+    snapshotVersion,
+  }
 
   await prisma.predictionResult.create({
     data: {
@@ -173,10 +228,19 @@ export async function runPrediction(
       confidence: output.confidence,
       rationale: JSON.stringify(output.rationale),
       riskNotes: JSON.stringify(output.riskNotes),
-      modelVersion: "rule-engine-v1",
+      modelVersion: "unified-scorer-v1+ai",
       dataSnapshotRefs: JSON.stringify(sourceRefs),
       signalsSnapshot: JSON.stringify(signals),
       indicatorsSnapshot: JSON.stringify(ind),
+      quantEvidenceJson: JSON.stringify({
+        compositeScore: unified.compositeScore,
+        breakdown: {
+          technical: unified.breakdown.technical.score,
+          quant: unified.breakdown.quant.score,
+          news: unified.breakdown.news.score,
+        },
+        keyInsight: aiAnalysis.keyInsight,
+      }),
     },
   })
 

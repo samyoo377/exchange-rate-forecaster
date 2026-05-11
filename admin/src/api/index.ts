@@ -476,10 +476,55 @@ export interface DashboardIndicators {
   mom10?: number
 }
 
+export interface PredictionBreakdown {
+  technical: {
+    score: number
+    weight: number
+    signals: { rsi: string; stoch: string; cci: string; ao: string; mom: string }
+    indicators: DashboardIndicators
+  }
+  quant: {
+    score: number
+    weight: number
+    regime: string
+    confidence: number
+    topSignals: { name: string; score: number; direction: string }[]
+    snapshotAge: number
+  }
+  news: {
+    score: number
+    weight: number
+    headline: string
+    sentiment: string
+    topFactors: { factor: string; score: number; direction: string }[]
+    digestAge: number
+  }
+}
+
+export interface DataFreshness {
+  marketDataAge: number
+  quantAge: number
+  newsAge: number
+  overallFresh: boolean
+}
+
+export interface PredictionHistoryPoint {
+  date: string
+  direction: string
+  confidence: number
+  compositeScore: number
+}
+
 export interface DashboardPrediction {
   direction: "bullish" | "bearish" | "neutral"
   confidence: number
   horizon: string
+  compositeScore?: number
+  generatedAt?: string
+  breakdown?: PredictionBreakdown
+  rationale?: string[]
+  dataFreshness?: DataFreshness
+  recentHistory?: PredictionHistoryPoint[]
 }
 
 export interface DashboardData {

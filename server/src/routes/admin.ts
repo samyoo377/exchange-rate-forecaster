@@ -612,7 +612,32 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const query = req.query as { symbol?: string; limit?: string }
     const symbol = query.symbol ?? process.env.DEFAULT_SYMBOL ?? "USDCNH"
     const limit = Math.min(200, Math.max(10, parseInt(query.limit ?? "60")))
-    const bars = await getLatestBars(symbol, limit)
+    let bars = await getLatestBars(symbol, limit)
+
+    const isStale = bars.length === 0 || (Date.now() - bars[bars.length - 1].tradeDate.getTime() > 2 * 24 * 60 * 60_000)
+
+    if (isStale) {
+      try {
+        const { fetchBars } = await import("../services/quant/dataAggregator.js")
+        const { upsertSnapshots } = await import("../services/market-data/alphaProvider.js")
+        const freshBars = await fetchBars(symbol, 120)
+        const ohlcBars = freshBars.map((b: any) => ({
+          symbol,
+          tradeDate: b.date,
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          volume: b.volume,
+          source: b.source ?? "yahoo_finance",
+          version: `auto-refresh-${new Date().toISOString().slice(0, 10)}`,
+        }))
+        await upsertSnapshots(ohlcBars)
+        bars = await getLatestBars(symbol, limit)
+      } catch {
+        // fallback to existing data
+      }
+    }
 
     if (bars.length >= 5) {
       return ok({
