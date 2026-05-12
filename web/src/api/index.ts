@@ -384,6 +384,34 @@ export async function getRateTrend(queryType = "M", days = 30): Promise<RateTren
   return res.data.data
 }
 
+// ── FinBERT ──
+
+export interface FinBertSummary {
+  total: number
+  positive: number
+  negative: number
+  neutral: number
+  dominant: "positive" | "negative" | "neutral"
+  dominantCn: string
+}
+
+export interface FinBertAnalysis {
+  items: { text: string; label: string; labelCn: string; confidence: number }[]
+  summary: FinBertSummary
+}
+
+export async function getFinBertStatus(): Promise<{ available: boolean }> {
+  const res = await http.get<ApiResponse<{ available: boolean }>>("/api/v1/admin/finbert/status")
+  if (res.data.code !== 0) return { available: false }
+  return res.data.data ?? { available: false }
+}
+
+export async function runFinBertAnalysis(symbol = "USDCNH"): Promise<FinBertAnalysis | null> {
+  const res = await http.post<ApiResponse<FinBertAnalysis>>("/api/v1/admin/finbert/analyze", { symbol })
+  if (res.data.code !== 0) throw new Error(res.data.message)
+  return res.data.data
+}
+
 export async function getRatePrediction(days = 30): Promise<RatePredictionData | null> {
   const res = await http.get<ApiResponse<RatePredictionData>>(
     `/api/v1/rate/prediction?days=${days}`,

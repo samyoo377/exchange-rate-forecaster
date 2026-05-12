@@ -56,6 +56,7 @@ import {
 import { CanvasRenderer } from "echarts/renderers"
 import { getRateTrend } from "../api/index"
 import type { RateTrendData } from "../api/index"
+import { useMarketStore } from "../stores/market"
 
 use([LineChart, GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, MarkLineComponent, MarkPointComponent, CanvasRenderer])
 
@@ -63,11 +64,13 @@ const loading = ref(false)
 const data = ref<RateTrendData | null>(null)
 const queryType = ref("M")
 const chartRef = ref<InstanceType<typeof VChart> | null>(null)
+const marketStore = useMarketStore()
 
 const legendState = reactive<Record<string, boolean>>({
   "汇率": true,
   "MA5": true,
   "MA10": true,
+  "轴枢点": true,
 })
 
 const legendItems = computed(() => [
@@ -91,6 +94,13 @@ const legendItems = computed(() => [
     dashed: true,
     active: legendState["MA10"],
     tooltip: "10日移动平均线：最近10个交易日的平均汇率，用于判断中期趋势方向",
+  },
+  {
+    name: "轴枢点",
+    color: "#909399",
+    dashed: true,
+    active: legendState["轴枢点"],
+    tooltip: "轴枢点水平线（R3/R2/R1/P/S1/S2/S3），基于前期高低收盘价计算的支撑阻力位",
   },
 ])
 
@@ -128,6 +138,29 @@ const chartOption = computed(() => {
   const min = Math.min(...rates)
   const max = Math.max(...rates)
   const padding = (max - min) * 0.1
+
+  const pivotMarkLines: any[] = []
+  if (legendState["轴枢点"]) {
+    const ind = marketStore.indicators
+    const pivotLevels = [
+      { value: ind.pivotR3, label: "R3", color: "#f56c6c" },
+      { value: ind.pivotR2, label: "R2", color: "#e6a23c" },
+      { value: ind.pivotR1, label: "R1", color: "#f0a020" },
+      { value: ind.pivotPP, label: "P", color: "#909399" },
+      { value: ind.pivotS1, label: "S1", color: "#85ce61" },
+      { value: ind.pivotS2, label: "S2", color: "#67c23a" },
+      { value: ind.pivotS3, label: "S3", color: "#529b2e" },
+    ]
+    for (const lv of pivotLevels) {
+      if (lv.value != null) {
+        pivotMarkLines.push({
+          yAxis: lv.value,
+          label: { formatter: `${lv.label} ${lv.value.toFixed(4)}`, position: "insideEndTop", fontSize: 10, color: lv.color },
+          lineStyle: { color: lv.color, type: "dashed", width: 1 },
+        })
+      }
+    }
+  }
 
   return {
     tooltip: {
@@ -188,6 +221,11 @@ const chartOption = computed(() => {
           symbolSize: 40,
           label: { fontSize: 10 },
         },
+        markLine: pivotMarkLines.length > 0 ? {
+          silent: true,
+          symbol: "none",
+          data: pivotMarkLines,
+        } : undefined,
       },
       {
         name: "MA5",
