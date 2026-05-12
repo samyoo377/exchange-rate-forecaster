@@ -69,6 +69,14 @@ export interface QuantStrategy {
   evaluate(context: StrategyContext): StrategySignal
 }
 
+export interface RiskExposure {
+  atr14: number
+  atr14Pct: number
+  maxDrawdownBp: number
+  volatilityLevel: "low" | "medium" | "high" | "extreme"
+  riskScore: number
+}
+
 export interface QuantBundle {
   symbol: string
   horizon: string
@@ -77,6 +85,7 @@ export interface QuantBundle {
   compositeScore: number
   confidence: number
   topSignals: StrategySignal[]
+  riskExposure: RiskExposure
   dataQuality: {
     overallScore: number
     syntheticRatio: number
@@ -90,6 +99,7 @@ export interface CompositeScoreResult {
   regime: MarketRegime
   confidence: number
   signals: StrategySignal[]
+  riskExposure: RiskExposure
   dataQuality: {
     overallScore: number
     syntheticRatio: number

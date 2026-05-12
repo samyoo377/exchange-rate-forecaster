@@ -1,5 +1,6 @@
 import { prisma } from "../../utils/db.js"
 import type { QuantBar, DataSourceStatus } from "./types.js"
+import { fetchFromAlphaVantage } from "./sources/alphaVantageSource.js"
 import { fetchFromYahoo } from "./sources/yahooSource.js"
 import { fetchFromFrankfurter } from "./sources/frankfurterSource.js"
 import { fetchFromEcb } from "./sources/ecbSource.js"
@@ -16,9 +17,10 @@ const CIRCUIT_BREAKER_THRESHOLD = 5
 const CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 60 * 1000
 
 const sources: SourceEntry[] = [
-  { name: "yahoo_finance", priority: 1, fetchFn: fetchFromYahoo, failureCount: 0, disabledUntil: null },
-  { name: "frankfurter", priority: 2, fetchFn: fetchFromFrankfurter, failureCount: 0, disabledUntil: null },
-  { name: "ecb", priority: 3, fetchFn: fetchFromEcb, failureCount: 0, disabledUntil: null },
+  { name: "alpha_vantage", priority: 1, fetchFn: fetchFromAlphaVantage, failureCount: 0, disabledUntil: null },
+  { name: "yahoo_finance", priority: 2, fetchFn: fetchFromYahoo, failureCount: 0, disabledUntil: null },
+  { name: "frankfurter", priority: 3, fetchFn: fetchFromFrankfurter, failureCount: 0, disabledUntil: null },
+  { name: "ecb", priority: 4, fetchFn: fetchFromEcb, failureCount: 0, disabledUntil: null },
 ]
 
 export async function fetchBars(symbol: string, days = 120): Promise<QuantBar[]> {

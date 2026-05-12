@@ -66,6 +66,19 @@ export async function upsertSnapshots(bars: OhlcBar[]): Promise<number> {
   let inserted = 0
   for (const bar of bars) {
     if (bar.high < bar.low || bar.open < bar.low || bar.close < bar.low) continue
+
+    const isSynthetic = bar.source === "frankfurter" || bar.source === "ecb"
+    if (isSynthetic) {
+      const existing = await prisma.normalizedMarketSnapshot.findFirst({
+        where: {
+          symbol: bar.symbol,
+          snapshotDate: bar.tradeDate,
+          source: { notIn: ["frankfurter", "ecb"] },
+        },
+      })
+      if (existing) continue
+    }
+
     try {
       await prisma.normalizedMarketSnapshot.upsert({
         where: {

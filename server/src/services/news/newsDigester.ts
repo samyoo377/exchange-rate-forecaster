@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { prisma } from "../../utils/db.js"
+import { analyzeWithFinBert, isFinBertAvailable, type FinBertAnalysis } from "../ai/finbertAnalyzer.js"
 
 const ABL_API_BASE_URL = process.env.ABL_API_BASE_URL ?? "https://api.ablai.top"
 const ABL_API_TOKEN = process.env.ABL_API_TOKEN ?? ""
@@ -268,6 +269,21 @@ export async function digestRecentNews(symbol = "USDCNH"): Promise<{ digestId: s
 
   let parsed: DigestOutput
   let validationIssues: string[] = []
+  const analysisLog: string[] = [
+    `# 消息面 AI 分析过程`,
+    ``,
+    `## 输入`,
+    `- 原始新闻: ${recentNews.length} 条`,
+    `- 聚合事件: ${clusters.length} 个`,
+    `- 最高热度: ${clusters[0]?.heat ?? 0}`,
+    `- 模型: ${DIGEST_MODEL_ID}`,
+    ``,
+    `## 聚类结果 (Top 10)`,
+  ]
+
+  for (const c of clusters.slice(0, 10)) {
+    analysisLog.push(`- [热度:${c.heat}] [来源:${c.sources.join(",")}] ${c.representative.title}`)
+  }
 
   try {
     const jsonMatch = content.match(/\{[\s\S]*\}/)
@@ -279,6 +295,10 @@ export async function digestRecentNews(symbol = "USDCNH"): Promise<{ digestId: s
       validationIssues = validateConsistency(parsed)
       if (validationIssues.length > 0) {
         console.warn(`[NewsDigester] 逻辑一致性警告: ${validationIssues.join("; ")}`)
+      }
+      analysisLog.push(``, `## AI 输出校验`, `- Zod 校验: 通过`)
+      if (validationIssues.length > 0) {
+        analysisLog.push(`- 一致性警告: ${validationIssues.join("; ")}`)
       }
     } else {
       console.warn(`[NewsDigester] Schema 校验失败，尝试兼容处理:`, validated.error.issues.slice(0, 3))
@@ -297,6 +317,7 @@ export async function digestRecentNews(symbol = "USDCNH"): Promise<{ digestId: s
         hotEvents: raw.hotEvents,
       }
       validationIssues.push("schema_fallback")
+      analysisLog.push(``, `## AI 输出校验`, `- Zod 校验: 失败，使用兼容处理`)
     }
   } catch {
     parsed = {
@@ -306,11 +327,52 @@ export async function digestRecentNews(symbol = "USDCNH"): Promise<{ digestId: s
       sentiment: "neutral",
     }
     validationIssues.push("json_parse_error")
+    analysisLog.push(``, `## AI 输出校验`, `- JSON 解析: 失败`)
+  }
+
+  analysisLog.push(
+    ``,
+    `## 分析结果`,
+    `- headline: ${parsed.headline}`,
+    `- sentiment: ${parsed.sentiment}`,
+    `- keyFactors: ${parsed.keyFactors.length} 个`,
+  )
+  for (const f of parsed.keyFactors) {
+    analysisLog.push(`  - ${f.factor}: ${f.direction} (score=${f.score.toFixed(2)}, conf=${f.confidence.toFixed(2)})`)
   }
 
   const avgScore = parsed.keyFactors.length > 0
     ? parsed.keyFactors.reduce((s, f) => s + f.score * f.confidence, 0) / parsed.keyFactors.length
     : 0
+
+  let finbertAnalysis: FinBertAnalysis | null = null
+  if (await isFinBertAvailable()) {
+    const textsForFinBert = clusters
+      .slice(0, 30)
+      .map((c) => {
+        const r = c.representative
+        return r.summary ? `${r.title}. ${r.summary.slice(0, 150)}` : r.title
+      })
+    finbertAnalysis = await analyzeWithFinBert(textsForFinBert)
+    if (finbertAnalysis) {
+      analysisLog.push(
+        ``,
+        `## FinBERT 模型情感分析`,
+        `- 分析条数: ${finbertAnalysis.summary.total}`,
+        `- 积极: ${finbertAnalysis.summary.positive} 条`,
+        `- 消极: ${finbertAnalysis.summary.negative} 条`,
+        `- 中性: ${finbertAnalysis.summary.neutral} 条`,
+        `- 整体情绪: ${finbertAnalysis.summary.dominantCn}`,
+        ``,
+        `### 各条新闻情感得分`,
+      )
+      for (const r of finbertAnalysis.results) {
+        analysisLog.push(`- [${r.sentimentCn}] (置信度:${(r.confidence * 100).toFixed(1)}%) ${r.text}`)
+      }
+    }
+  } else {
+    analysisLog.push(``, `## FinBERT 模型`, `- 状态: 服务未启动，跳过 FinBERT 分析`)
+  }
 
   const digest = await prisma.newsDigest.create({
     data: {
@@ -321,6 +383,7 @@ export async function digestRecentNews(symbol = "USDCNH"): Promise<{ digestId: s
       sentiment: parsed.sentiment,
       rawItemIds: JSON.stringify(allItemIds),
       modelVersion: DIGEST_MODEL_ID,
+      aiAnalysisContent: analysisLog.join("\n"),
     },
   })
 

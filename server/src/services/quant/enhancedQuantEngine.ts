@@ -93,6 +93,7 @@ export async function buildQuantBundle(
     compositeScore: result.compositeScore,
     confidence: result.confidence,
     topSignals,
+    riskExposure: result.riskExposure,
     dataQuality: result.dataQuality,
     datasetVersion: result.datasetVersion,
     timestamp: result.timestamp,

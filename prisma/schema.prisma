@@ -47,14 +47,15 @@ model NormalizedMarketSnapshot {
 }
 
 model InsightSummary {
-  id           String   @id @default(cuid())
-  symbol       String
-  summaryTitle String
-  summaryText  String   @db.Text
-  drivers      String   @db.Text
-  tags         String   @db.Text
-  sourceRefs   String   @db.Text
-  createdAt    DateTime @default(now())
+  id                String   @id @default(cuid())
+  symbol            String
+  summaryTitle      String
+  summaryText       String   @db.Text
+  drivers           String   @db.Text
+  tags              String   @db.Text
+  sourceRefs        String   @db.Text
+  aiAnalysisContent String?  @db.MediumText
+  createdAt         DateTime @default(now())
 }
 
 model PredictionResult {
@@ -73,6 +74,7 @@ model PredictionResult {
   quantSignalSnapshotId  String?
   quantDatasetVersion    String?
   quantEvidenceJson      String?  @db.Text
+  aiAnalysisContent      String?  @db.MediumText
   createdAt              DateTime @default(now())
 
   @@index([symbol, createdAt])
@@ -105,16 +107,17 @@ model NewsRawItem {
 }
 
 model NewsDigest {
-  id           String   @id @default(cuid())
-  digestDate   DateTime @default(now())
-  symbol       String   @default("USDCNH")
-  headline     String
-  summary      String   @db.Text
-  keyFactors   String   @db.Text
-  sentiment    String
-  rawItemIds   String   @db.Text
-  modelVersion String
-  createdAt    DateTime @default(now())
+  id                String   @id @default(cuid())
+  digestDate        DateTime @default(now())
+  symbol            String   @default("USDCNH")
+  headline          String
+  summary           String   @db.Text
+  keyFactors        String   @db.Text
+  sentiment         String
+  rawItemIds        String   @db.Text
+  modelVersion      String
+  aiAnalysisContent String?  @db.MediumText
+  createdAt         DateTime @default(now())
 }
 
 // ── Feature 1: Chat History + File Upload ──

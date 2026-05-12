@@ -249,7 +249,37 @@ export async function uploadFile(file: File): Promise<UploadedFileInfo> {
   return info
 }
 
-// ── News Fetch Logs ──
+// ── FinBERT 情感分析 ──
+
+export interface FinBertResult {
+  text: string
+  sentiment: "positive" | "negative" | "neutral"
+  sentimentCn: string
+  confidence: number
+  scores: { positive: number; negative: number; neutral: number }
+}
+
+export interface FinBertSummary {
+  total: number
+  positive: number
+  negative: number
+  neutral: number
+  dominant: "positive" | "negative" | "neutral"
+  dominantCn: string
+}
+
+export interface FinBertAnalysis {
+  results: FinBertResult[]
+  summary: FinBertSummary
+}
+
+export async function getFinBertStatus(): Promise<{ available: boolean }> {
+  return unwrap(await http.get("/api/v1/admin/finbert/status"))
+}
+
+export async function runFinBertAnalysis(texts?: string[]): Promise<FinBertAnalysis> {
+  return unwrap(await http.post("/api/v1/admin/finbert/analyze", { texts }))
+}
 
 export async function getNewsFetchLogs(params?: { sourceId?: string; page?: number; pageSize?: number }): Promise<TableQueryResult> {
   const q = new URLSearchParams()
@@ -411,8 +441,8 @@ export interface RateTrendData {
   data: RateTrendPoint[]
 }
 
-export async function getRateTrend(days = 30, queryType = "M"): Promise<RateTrendData> {
-  return unwrap(await http.get(`/api/v1/admin/market-data/rate-trend?days=${days}&queryType=${queryType}`))
+export async function getRateTrend(days = 30, queryType = "M", granularity = "hourly"): Promise<RateTrendData> {
+  return unwrap(await http.get(`/api/v1/admin/market-data/rate-trend?days=${days}&queryType=${queryType}&granularity=${granularity}`))
 }
 
 // ── Cron Latest Output ──
@@ -474,6 +504,40 @@ export interface DashboardIndicators {
   minusDi14?: number
   ao?: number
   mom10?: number
+  macd?: number
+  macdSignal?: number
+  macdHist?: number
+  stochRsiK?: number
+  stochRsiD?: number
+  williamsR?: number
+  bullPower?: number
+  bearPower?: number
+  uo?: number
+  ema10?: number
+  ema20?: number
+  ema30?: number
+  ema50?: number
+  ema100?: number
+  ema200?: number
+  sma10?: number
+  sma20?: number
+  sma30?: number
+  sma50?: number
+  sma100?: number
+  sma200?: number
+  vwma?: number
+  hma?: number
+  ichTenkan?: number
+  ichKijun?: number
+  ichSenkouA?: number
+  ichSenkouB?: number
+  pivotPP?: number
+  pivotR1?: number
+  pivotR2?: number
+  pivotR3?: number
+  pivotS1?: number
+  pivotS2?: number
+  pivotS3?: number
 }
 
 export interface PredictionBreakdown {
@@ -515,6 +579,14 @@ export interface PredictionHistoryPoint {
   compositeScore: number
 }
 
+export interface RiskExposure {
+  atr14: number
+  atr14Pct: number
+  maxDrawdownBp: number
+  volatilityLevel: "low" | "medium" | "high" | "extreme"
+  riskScore: number
+}
+
 export interface DashboardPrediction {
   direction: "bullish" | "bearish" | "neutral"
   confidence: number
@@ -524,6 +596,7 @@ export interface DashboardPrediction {
   breakdown?: PredictionBreakdown
   rationale?: string[]
   dataFreshness?: DataFreshness
+  riskExposure?: RiskExposure
   recentHistory?: PredictionHistoryPoint[]
 }
 
@@ -534,6 +607,6 @@ export interface DashboardData {
   latestPrediction: DashboardPrediction | null
 }
 
-export async function getDashboardData(symbol = "USDCNH"): Promise<DashboardData | null> {
-  return unwrap(await http.get(`/api/v1/dashboard/latest?symbol=${symbol}`))
+export async function getDashboardData(symbol = "USDCNH", interval = "1h"): Promise<DashboardData | null> {
+  return unwrap(await http.get(`/api/v1/dashboard/latest?symbol=${symbol}&interval=${interval}`))
 }

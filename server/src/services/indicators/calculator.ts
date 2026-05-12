@@ -1,6 +1,11 @@
 import type { OhlcBar, IndicatorValues } from "../../types/index.js"
 import { getIndicatorConfigs } from "./configService.js"
 import { evaluateFormula, evaluateStepFormulas, type StepFormula } from "./formulaEvaluator.js"
+import {
+  calcMacd, calcStochRsi, calcWilliamsR, calcBullBearPower,
+  calcUltimateOscillator, calcEma, calcSma, calcVwma, calcHma,
+  calcIchimoku, calcPivotPoints,
+} from "./extendedCalculators.js"
 
 function sma(arr: number[], period: number, end: number): number | null {
   if (end < period - 1) return null
@@ -105,7 +110,7 @@ export function calcAdx(bars: OhlcBar[], period = 14): {
   const dmMinus: number[] = [0]
 
   for (let i = 1; i < n; i++) {
-    const h = bars[i].high, l = bars[i].low, c = bars[i].close
+    const h = bars[i].high, l = bars[i].low
     const ph = bars[i - 1].high, pl = bars[i - 1].low, pc = bars[i - 1].close
     trArr.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)))
     const up = h - ph
@@ -199,7 +204,8 @@ function computeSeriesWithParams(
   const aoArr = calcAo(bars, aoShort, aoLong)
   const momArr = calcMom(bars, momPeriod)
 
-  return bars.map((_, i) => ({
+  return bars.map((bar, i) => ({
+    close: bar.close,
     rsi14: rsiArr[i] ?? undefined,
     stochK: stoch.k[i] ?? undefined,
     stochD: stoch.d[i] ?? undefined,
@@ -214,7 +220,14 @@ function computeSeriesWithParams(
 
 // ── Config-aware async computation ──
 
-const BUILTIN_TYPES = new Set(["RSI", "STOCH", "CCI", "ADX", "AO", "MOM"])
+const BUILTIN_TYPES = new Set([
+  "RSI", "STOCH", "CCI", "ADX", "AO", "MOM",
+  "MACD", "STOCH_RSI", "WILLIAMS_R", "BBP", "UO",
+  "EMA_10", "EMA_20", "EMA_30", "EMA_50", "EMA_100", "EMA_200",
+  "SMA_10", "SMA_20", "SMA_30", "SMA_50", "SMA_100", "SMA_200",
+  "VWMA", "HMA", "ICHIMOKU",
+  "PIVOT",
+])
 
 export async function computeIndicatorSeriesFromConfig(bars: OhlcBar[]): Promise<IndicatorValues[]> {
   const configs = await getIndicatorConfigs()
@@ -232,6 +245,8 @@ export async function computeIndicatorSeriesFromConfig(bars: OhlcBar[]): Promise
     cciP.period, adxP.period,
     aoP.shortPeriod, aoP.longPeriod, momP.period,
   )
+
+  computeExtendedBuiltins(bars, baseSeries, configs)
 
   for (const [type, config] of configs) {
     if (BUILTIN_TYPES.has(type)) continue
@@ -272,4 +287,118 @@ export async function computeIndicatorSeriesFromConfig(bars: OhlcBar[]): Promise
   }
 
   return baseSeries
+}
+
+function computeExtendedBuiltins(
+  bars: OhlcBar[],
+  series: IndicatorValues[],
+  configs: Map<string, any>,
+): void {
+  const n = bars.length
+
+  if (configs.has("MACD") && configs.get("MACD").enabled !== false) {
+    const p = configs.get("MACD") ? JSON.parse(configs.get("MACD").params) : {}
+    const macd = calcMacd(bars, p.fast ?? 12, p.slow ?? 26, p.signal ?? 9)
+    for (let i = 0; i < n; i++) {
+      ;(series[i] as any).macd = macd.macd[i] ?? undefined
+      ;(series[i] as any).macdSignal = macd.signal[i] ?? undefined
+      ;(series[i] as any).macdHist = macd.histogram[i] ?? undefined
+    }
+  }
+
+  if (configs.has("STOCH_RSI") && configs.get("STOCH_RSI").enabled !== false) {
+    const p = configs.get("STOCH_RSI") ? JSON.parse(configs.get("STOCH_RSI").params) : {}
+    const sr = calcStochRsi(bars, p.rsiPeriod ?? 14, p.stochPeriod ?? 14, p.kSmooth ?? 3, p.dSmooth ?? 3)
+    for (let i = 0; i < n; i++) {
+      ;(series[i] as any).stochRsiK = sr.k[i] ?? undefined
+      ;(series[i] as any).stochRsiD = sr.d[i] ?? undefined
+    }
+  }
+
+  if (configs.has("WILLIAMS_R") && configs.get("WILLIAMS_R").enabled !== false) {
+    const p = configs.get("WILLIAMS_R") ? JSON.parse(configs.get("WILLIAMS_R").params) : {}
+    const wr = calcWilliamsR(bars, p.period ?? 14)
+    for (let i = 0; i < n; i++) {
+      ;(series[i] as any).williamsR = wr[i] ?? undefined
+    }
+  }
+
+  if (configs.has("BBP") && configs.get("BBP").enabled !== false) {
+    const p = configs.get("BBP") ? JSON.parse(configs.get("BBP").params) : {}
+    const bbp = calcBullBearPower(bars, p.period ?? 13)
+    for (let i = 0; i < n; i++) {
+      ;(series[i] as any).bullPower = bbp.bull[i] ?? undefined
+      ;(series[i] as any).bearPower = bbp.bear[i] ?? undefined
+    }
+  }
+
+  if (configs.has("UO") && configs.get("UO").enabled !== false) {
+    const p = configs.get("UO") ? JSON.parse(configs.get("UO").params) : {}
+    const uo = calcUltimateOscillator(bars, p.p1 ?? 7, p.p2 ?? 14, p.p3 ?? 28)
+    for (let i = 0; i < n; i++) {
+      ;(series[i] as any).uo = uo[i] ?? undefined
+    }
+  }
+
+  const emaPeriods = [10, 20, 30, 50, 100, 200]
+  for (const period of emaPeriods) {
+    const key = `EMA_${period}`
+    if (configs.has(key) && configs.get(key).enabled !== false) {
+      const vals = calcEma(bars, period)
+      for (let i = 0; i < n; i++) {
+        ;(series[i] as any)[`ema${period}`] = vals[i] ?? undefined
+      }
+    }
+  }
+
+  const smaPeriods = [10, 20, 30, 50, 100, 200]
+  for (const period of smaPeriods) {
+    const key = `SMA_${period}`
+    if (configs.has(key) && configs.get(key).enabled !== false) {
+      const vals = calcSma(bars, period)
+      for (let i = 0; i < n; i++) {
+        ;(series[i] as any)[`sma${period}`] = vals[i] ?? undefined
+      }
+    }
+  }
+
+  if (configs.has("VWMA") && configs.get("VWMA").enabled !== false) {
+    const p = configs.get("VWMA") ? JSON.parse(configs.get("VWMA").params) : {}
+    const vals = calcVwma(bars, p.period ?? 20)
+    for (let i = 0; i < n; i++) {
+      ;(series[i] as any).vwma = vals[i] ?? undefined
+    }
+  }
+
+  if (configs.has("HMA") && configs.get("HMA").enabled !== false) {
+    const p = configs.get("HMA") ? JSON.parse(configs.get("HMA").params) : {}
+    const vals = calcHma(bars, p.period ?? 9)
+    for (let i = 0; i < n; i++) {
+      ;(series[i] as any).hma = vals[i] ?? undefined
+    }
+  }
+
+  if (configs.has("ICHIMOKU") && configs.get("ICHIMOKU").enabled !== false) {
+    const p = configs.get("ICHIMOKU") ? JSON.parse(configs.get("ICHIMOKU").params) : {}
+    const ich = calcIchimoku(bars, p.tenkan ?? 9, p.kijun ?? 26, p.senkou ?? 52)
+    for (let i = 0; i < n; i++) {
+      ;(series[i] as any).ichTenkan = ich.tenkanSen[i] ?? undefined
+      ;(series[i] as any).ichKijun = ich.kijunSen[i] ?? undefined
+      ;(series[i] as any).ichSenkouA = ich.senkouA[i] ?? undefined
+      ;(series[i] as any).ichSenkouB = ich.senkouB[i] ?? undefined
+    }
+  }
+
+  if (configs.has("PIVOT") && configs.get("PIVOT").enabled !== false) {
+    const pv = calcPivotPoints(bars)
+    for (let i = 0; i < n; i++) {
+      ;(series[i] as any).pivotPP = pv.pp[i] ?? undefined
+      ;(series[i] as any).pivotR1 = pv.r1[i] ?? undefined
+      ;(series[i] as any).pivotR2 = pv.r2[i] ?? undefined
+      ;(series[i] as any).pivotR3 = pv.r3[i] ?? undefined
+      ;(series[i] as any).pivotS1 = pv.s1[i] ?? undefined
+      ;(series[i] as any).pivotS2 = pv.s2[i] ?? undefined
+      ;(series[i] as any).pivotS3 = pv.s3[i] ?? undefined
+    }
+  }
 }

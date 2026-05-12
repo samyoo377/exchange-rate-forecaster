@@ -69,15 +69,31 @@ function getMomSignal(
   return "neutral"
 }
 
+function getPivotSignal(pivotValue: number | undefined, close: number | undefined): Signal {
+  if (pivotValue == null || close == null) return "neutral"
+  const diffBps = ((close - pivotValue) / pivotValue) * 10000
+  if (diffBps > 100) return "sell"
+  if (diffBps < -100) return "buy"
+  return "neutral"
+}
+
 // ── Default (backward-compatible) ──
 
 export function computeSignals(ind: IndicatorValues, prev?: IndicatorValues): SignalResult {
+  const close = ind.close
   return {
     rsi: getRsiSignal(ind, prev?.rsi14),
     stoch: getStochSignal(ind),
     cci: getCciSignal(ind),
     ao: getAoSignal(ind, prev?.ao),
     mom: getMomSignal(ind),
+    pivotPP: getPivotSignal(ind.pivotPP, close),
+    pivotR1: getPivotSignal(ind.pivotR1, close),
+    pivotR2: getPivotSignal(ind.pivotR2, close),
+    pivotR3: getPivotSignal(ind.pivotR3, close),
+    pivotS1: getPivotSignal(ind.pivotS1, close),
+    pivotS2: getPivotSignal(ind.pivotS2, close),
+    pivotS3: getPivotSignal(ind.pivotS3, close),
   }
 }
 
@@ -108,12 +124,21 @@ export async function computeSignalsFromConfig(
     ? (JSON.parse(configs.get("MOM")!.signalThresholds) as SignalThresholds["MOM"])
     : { zeroCross: true }
 
+  const close = ind.close
+
   return {
     rsi: getRsiSignal(ind, prev?.rsi14, rsiTh),
     stoch: getStochSignal(ind, stochTh),
     cci: getCciSignal(ind, cciTh),
     ao: getAoSignal(ind, prev?.ao, aoTh),
     mom: getMomSignal(ind, momTh),
+    pivotPP: getPivotSignal(ind.pivotPP, close),
+    pivotR1: getPivotSignal(ind.pivotR1, close),
+    pivotR2: getPivotSignal(ind.pivotR2, close),
+    pivotR3: getPivotSignal(ind.pivotR3, close),
+    pivotS1: getPivotSignal(ind.pivotS1, close),
+    pivotS2: getPivotSignal(ind.pivotS2, close),
+    pivotS3: getPivotSignal(ind.pivotS3, close),
   }
 }
 
@@ -141,6 +166,16 @@ export async function buildPredictionFromConfig(
     signalScore(signals.cci) * w("CCI") +
     signalScore(signals.ao) * w("AO") +
     signalScore(signals.mom) * w("MOM")
+
+  const pivotWeight = w("PIVOT") ?? 0.5
+  const pivotSignals = [
+    signals.pivotPP, signals.pivotR1, signals.pivotR2, signals.pivotR3,
+    signals.pivotS1, signals.pivotS2, signals.pivotS3,
+  ].filter((s): s is Signal => s != null)
+  if (pivotSignals.length > 0) {
+    const pivotScore = pivotSignals.reduce((sum, s) => sum + signalScore(s), 0) / pivotSignals.length
+    score += pivotScore * pivotWeight
+  }
 
   const adx = ind.adx14
   if (adx != null) {
@@ -191,6 +226,20 @@ function buildRationale(
   if (signals.ao === "sell") rationale.push("AO 动量震荡指标持续下降且为负")
   if (signals.mom === "buy") rationale.push(`10 期动量为正（MOM = ${ind.mom10?.toFixed(4)}）`)
   if (signals.mom === "sell") rationale.push(`10 期动量为负（MOM = ${ind.mom10?.toFixed(4)}）`)
+
+  const pivotEntries = [
+    { key: "pivotPP" as const, label: "PP" },
+    { key: "pivotR1" as const, label: "R1" },
+    { key: "pivotR2" as const, label: "R2" },
+    { key: "pivotR3" as const, label: "R3" },
+    { key: "pivotS1" as const, label: "S1" },
+    { key: "pivotS2" as const, label: "S2" },
+    { key: "pivotS3" as const, label: "S3" },
+  ]
+  const pivotBuy = pivotEntries.filter((e) => signals[e.key] === "buy").map((e) => e.label)
+  const pivotSell = pivotEntries.filter((e) => signals[e.key] === "sell").map((e) => e.label)
+  if (pivotBuy.length > 0) rationale.push(`价格低于轴枢支撑位 ${pivotBuy.join("/")}，偏多信号`)
+  if (pivotSell.length > 0) rationale.push(`价格高于轴枢阻力位 ${pivotSell.join("/")}，偏空信号`)
 
   if (adx != null) {
     if (adx > adxTh.strongTrendAbove) {

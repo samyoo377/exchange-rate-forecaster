@@ -11,7 +11,9 @@ const AnalysisSchema = z.object({
   keyInsight: z.string().min(20).max(300),
 })
 
-export type AiAnalysisResult = z.infer<typeof AnalysisSchema>
+export interface AiAnalysisResult extends z.infer<typeof AnalysisSchema> {
+  aiAnalysisContent?: string
+}
 
 interface AnalyzerInput {
   symbol: string
@@ -70,15 +72,57 @@ ${input.newsFactors.length > 0 ? "- 关键因素:\n" + input.newsFactors.map((f)
 }
 
 export async function generateAiAnalysis(input: AnalyzerInput): Promise<AiAnalysisResult> {
+  const prompt = buildAnalyzerPrompt(input)
+  const analysisLog: string[] = [
+    `# AI 预测分析过程`,
+    ``,
+    `## 输入数据`,
+    `- 货币对: ${input.symbol}`,
+    `- 预测周期: ${input.horizon}`,
+    `- 预判方向: ${input.direction}`,
+    `- 综合评分: ${input.compositeScore.toFixed(2)}`,
+    ``,
+    `## 技术面指标`,
+    `| 指标 | 数值 |`,
+    `|------|------|`,
+    `| RSI(14) | ${input.indicators.rsi14?.toFixed(2) ?? "N/A"} |`,
+    `| Stochastic %K | ${input.indicators.stochK?.toFixed(2) ?? "N/A"} |`,
+    `| CCI(20) | ${input.indicators.cci20?.toFixed(2) ?? "N/A"} |`,
+    `| ADX(14) | ${input.indicators.adx14?.toFixed(2) ?? "N/A"} |`,
+    `| AO | ${input.indicators.ao?.toFixed(4) ?? "N/A"} |`,
+    `| MOM(10) | ${input.indicators.mom10?.toFixed(4) ?? "N/A"} |`,
+    ``,
+    `## 信号判定`,
+    `- RSI: ${input.signals.rsi} | Stoch: ${input.signals.stoch} | CCI: ${input.signals.cci} | AO: ${input.signals.ao} | MOM: ${input.signals.mom}`,
+    ``,
+    `## 量化策略`,
+    `- 复合评分: ${input.quantScore != null ? input.quantScore.toFixed(1) : "N/A"}`,
+    `- 市场状态: ${input.quantRegime ?? "N/A"}`,
+    ``,
+    `## 消息面`,
+    `- 标题: ${input.newsHeadline ?? "无"}`,
+    `- 情绪: ${input.newsSentiment ?? "N/A"}`,
+  ]
+
+  if (input.newsFactors.length > 0) {
+    analysisLog.push(`- 关键因素:`)
+    for (const f of input.newsFactors) {
+      analysisLog.push(`  - ${f.factor} (${f.direction}, ${f.score > 0 ? "+" : ""}${f.score.toFixed(2)})`)
+    }
+  }
+
   if (!ABL_API_TOKEN) {
-    return {
+    const fallback = {
       rationale: buildFallbackRationale(input),
       riskNotes: ["AI分析服务未配置，当前为规则生成的依据"],
       keyInsight: buildFallbackInsight(input),
     }
+    analysisLog.push(``, `## AI 调用`, `- 状态: 跳过（API Token 未配置）`, `- 降级: 使用规则生成`)
+    analysisLog.push(``, `## 输出`, `- rationale: ${JSON.stringify(fallback.rationale)}`, `- riskNotes: ${JSON.stringify(fallback.riskNotes)}`, `- keyInsight: ${fallback.keyInsight}`)
+    return { ...fallback, aiAnalysisContent: analysisLog.join("\n") }
   }
 
-  const prompt = buildAnalyzerPrompt(input)
+  analysisLog.push(``, `## AI 调用`, `- 模型: ${ANALYZER_MODEL}`, `- temperature: 0.3`)
 
   const response = await fetch(`${ABL_API_BASE_URL}/v1/chat/completions`, {
     method: "POST",
@@ -98,28 +142,37 @@ export async function generateAiAnalysis(input: AnalyzerInput): Promise<AiAnalys
   })
 
   if (!response.ok) {
-    console.error(`AI Analyzer API failed (${response.status})`)
-    return {
+    const fallback = {
       rationale: buildFallbackRationale(input),
       riskNotes: ["AI分析调用失败，当前为规则生成的依据"],
       keyInsight: buildFallbackInsight(input),
     }
+    analysisLog.push(`- 状态: 失败 (HTTP ${response.status})`, `- 降级: 使用规则生成`)
+    analysisLog.push(``, `## 输出`, `- rationale: ${JSON.stringify(fallback.rationale)}`, `- keyInsight: ${fallback.keyInsight}`)
+    return { ...fallback, aiAnalysisContent: analysisLog.join("\n") }
   }
 
   const result = await response.json() as any
   const content = result.choices?.[0]?.message?.content ?? ""
 
+  analysisLog.push(`- 状态: 成功`)
+  analysisLog.push(``, `## AI 原始输出`, "```json", content, "```")
+
   try {
     const jsonMatch = content.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error("No JSON found")
     const parsed = JSON.parse(jsonMatch[0])
-    return AnalysisSchema.parse(parsed)
+    const validated = AnalysisSchema.parse(parsed)
+    analysisLog.push(``, `## 校验`, `- Zod 校验: 通过`)
+    return { ...validated, aiAnalysisContent: analysisLog.join("\n") }
   } catch {
-    return {
+    const fallback = {
       rationale: buildFallbackRationale(input),
       riskNotes: ["AI输出解析失败，当前为规则生成的依据"],
       keyInsight: buildFallbackInsight(input),
     }
+    analysisLog.push(``, `## 校验`, `- Zod 校验: 失败，降级为规则生成`)
+    return { ...fallback, aiAnalysisContent: analysisLog.join("\n") }
   }
 }
 

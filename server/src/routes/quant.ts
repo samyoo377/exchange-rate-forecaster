@@ -61,6 +61,7 @@ export async function registerQuantRoutes(app: FastifyInstance) {
         regime: result.regime,
         confidence: result.confidence,
         signalCount: result.signals.length,
+        riskExposure: result.riskExposure,
         dataQuality: result.dataQuality,
         datasetVersion: result.datasetVersion,
         timestamp: result.timestamp.toISOString(),

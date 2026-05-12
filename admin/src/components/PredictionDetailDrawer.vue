@@ -96,6 +96,31 @@
         </div>
       </div>
 
+      <div v-if="prediction.riskExposure" class="section">
+        <div class="section-title">风险敞口</div>
+        <div class="risk-exposure-card">
+          <div class="risk-gauge">
+            <div class="risk-gauge-bar">
+              <div class="risk-gauge-fill" :style="{ width: prediction.riskExposure.riskScore + '%' }" :class="riskLevelClass"></div>
+            </div>
+            <div class="risk-gauge-labels">
+              <span>低</span>
+              <span>中</span>
+              <span>高</span>
+              <span>极高</span>
+            </div>
+          </div>
+          <el-descriptions :column="2" size="small" border class="risk-desc">
+            <el-descriptions-item label="ATR(14)">{{ prediction.riskExposure.atr14.toFixed(4) }}</el-descriptions-item>
+            <el-descriptions-item label="ATR%">{{ prediction.riskExposure.atr14Pct.toFixed(3) }}%</el-descriptions-item>
+            <el-descriptions-item label="最大回撤">{{ prediction.riskExposure.maxDrawdownBp }} bp</el-descriptions-item>
+            <el-descriptions-item label="波动等级">
+              <el-tag :type="riskTagType" size="small" effect="plain">{{ riskLevelLabel }}</el-tag>
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+      </div>
+
       <div v-if="prediction.rationale?.length" class="section">
         <div class="section-title">分析依据</div>
         <div class="rationale-list">
@@ -160,6 +185,30 @@ const tClass = computed(() => {
 const nClass = computed(() => {
   const s = props.prediction?.breakdown?.news.score ?? 0
   return s > 10 ? "bullish" : s < -10 ? "bearish" : "neutral"
+})
+
+const riskLevelClass = computed(() => {
+  const level = props.prediction?.riskExposure?.volatilityLevel
+  if (level === "extreme") return "extreme"
+  if (level === "high") return "high"
+  if (level === "medium") return "medium"
+  return "low"
+})
+
+const riskTagType = computed(() => {
+  const level = props.prediction?.riskExposure?.volatilityLevel
+  if (level === "extreme") return "danger"
+  if (level === "high") return "warning"
+  if (level === "medium") return "info"
+  return "success"
+})
+
+const riskLevelLabel = computed(() => {
+  const level = props.prediction?.riskExposure?.volatilityLevel
+  if (level === "extreme") return "极高"
+  if (level === "high") return "高"
+  if (level === "medium") return "中等"
+  return "低"
 })
 </script>
 
@@ -247,6 +296,36 @@ const nClass = computed(() => {
   background: #fef0f0;
   border-radius: 6px;
 }
+
+.risk-exposure-card {
+  padding: 12px;
+  background: #fafbfc;
+  border-radius: 8px;
+}
+.risk-gauge { margin-bottom: 12px; }
+.risk-gauge-bar {
+  height: 8px;
+  background: #e4e7ed;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.risk-gauge-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.risk-gauge-fill.low { background: #67c23a; }
+.risk-gauge-fill.medium { background: #e6a23c; }
+.risk-gauge-fill.high { background: #f56c6c; }
+.risk-gauge-fill.extreme { background: #a61d24; }
+.risk-gauge-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #c0c4cc;
+  margin-top: 2px;
+}
+.risk-desc { margin-top: 8px; }
 
 .bullish { color: #67c23a; }
 .bearish { color: #f56c6c; }

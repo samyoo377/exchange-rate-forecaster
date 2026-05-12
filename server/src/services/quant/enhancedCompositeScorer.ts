@@ -1,9 +1,10 @@
-import type { FxBar, StrategySignal, CompositeScoreResult, FxInterval } from "./fxTypes.js"
+import type { FxBar, StrategySignal, CompositeScoreResult, FxInterval, RiskExposure } from "./fxTypes.js"
 import type { MarketRegime } from "./types.js"
 import { REGIME_WEIGHTS } from "./types.js"
 import { detectRegime } from "./regimeDetector.js"
 import { runAllStrategies } from "./strategy/index.js"
 import { fxBarsToQuantBars } from "./strategy/utils.js"
+import { computeAtr } from "./algorithms/volatilityRegime.js"
 
 const QUALITY_WEIGHT_MODIFIERS: Record<string, { syntheticPenalty: number }> = {
   bollingerBands: { syntheticPenalty: 0.3 },
@@ -45,6 +46,7 @@ export function computeEnhancedCompositeScore(
 
   const compositeScore = totalWeight > 0 ? weightedSum / totalWeight : 0
   const confidence = computeEnhancedConfidence(signals, compositeScore, regime, overallQuality)
+  const riskExposure = computeRiskExposure(quantBars)
 
   const datasetVersion = buildDatasetVersion(bars)
 
@@ -53,6 +55,7 @@ export function computeEnhancedCompositeScore(
     regime,
     confidence: Math.round(confidence * 1000) / 1000,
     signals,
+    riskExposure,
     dataQuality: {
       overallScore: Math.round(overallQuality * 100) / 100,
       syntheticRatio: Math.round(syntheticRatio * 100) / 100,
@@ -90,4 +93,43 @@ function buildDatasetVersion(bars: FxBar[]): string {
   const source = bars[0].source
   const latest = bars[bars.length - 1].timestamp.toISOString().slice(0, 10)
   return `${source}_${bars.length}bars_${latest}`
+}
+
+function computeRiskExposure(quantBars: import("./types.js").QuantBar[]): RiskExposure {
+  if (quantBars.length < 15) {
+    return { atr14: 0, atr14Pct: 0, maxDrawdownBp: 0, volatilityLevel: "low", riskScore: 0 }
+  }
+
+  const atrSeries = computeAtr(quantBars, 14)
+  const atr14 = atrSeries[atrSeries.length - 1]
+  const latestClose = quantBars[quantBars.length - 1].close
+  const atr14Pct = (atr14 / latestClose) * 100
+
+  const recentBars = quantBars.slice(-20)
+  let peak = recentBars[0].close
+  let maxDd = 0
+  for (const bar of recentBars) {
+    if (bar.close > peak) peak = bar.close
+    const dd = (peak - bar.close) / peak
+    if (dd > maxDd) maxDd = dd
+  }
+  const maxDrawdownBp = Math.round(maxDd * 10000)
+
+  let volatilityLevel: RiskExposure["volatilityLevel"]
+  if (atr14Pct < 0.15) volatilityLevel = "low"
+  else if (atr14Pct < 0.35) volatilityLevel = "medium"
+  else if (atr14Pct < 0.60) volatilityLevel = "high"
+  else volatilityLevel = "extreme"
+
+  const riskScore = Math.min(100, Math.round(
+    (atr14Pct / 0.6) * 40 + (maxDrawdownBp / 200) * 30 + (volatilityLevel === "extreme" ? 30 : volatilityLevel === "high" ? 20 : volatilityLevel === "medium" ? 10 : 0),
+  ))
+
+  return {
+    atr14: Math.round(atr14 * 10000) / 10000,
+    atr14Pct: Math.round(atr14Pct * 1000) / 1000,
+    maxDrawdownBp,
+    volatilityLevel,
+    riskScore,
+  }
 }

@@ -3,7 +3,12 @@ import { computeIndicatorSeriesFromConfig } from "../indicators/calculator.js"
 import { computeSignalsFromConfig } from "../prediction/engine.js"
 import { computeUnifiedPrediction } from "../prediction/unifiedScorer.js"
 import { generateAiAnalysis } from "../prediction/aiAnalyzer.js"
+import { computeAtr } from "../quant/algorithms/volatilityRegime.js"
+import { fetchFromAlphaVantage } from "../quant/sources/alphaVantageSource.js"
+import { upsertSnapshots } from "../market-data/alphaProvider.js"
+import { genVersion } from "../../utils/helpers.js"
 import type { OhlcBar, PredictionOutput } from "../../types/index.js"
+import type { QuantBar } from "../quant/types.js"
 
 export type Interval = "1h" | "4h" | "1d"
 
@@ -77,18 +82,77 @@ function aggregateBars(rawBars: OhlcBar[], interval: Interval): OhlcBar[] {
   return result
 }
 
+const STALE_THRESHOLD_MS = 2 * 24 * 60 * 60 * 1000
+
+async function ensureFreshData(symbol: string): Promise<void> {
+  const latestReal = await prisma.normalizedMarketSnapshot.findFirst({
+    where: { symbol, source: { in: ["excel", "alpha_vantage", "yahoo_finance"] } },
+    orderBy: { snapshotDate: "desc" },
+    select: { snapshotDate: true },
+  })
+
+  const isStale = !latestReal || (Date.now() - latestReal.snapshotDate.getTime() > STALE_THRESHOLD_MS)
+  if (!isStale) return
+
+  try {
+    const quantBars = await fetchFromAlphaVantage(symbol, 120)
+    const version = genVersion(symbol)
+    const ohlcBars: OhlcBar[] = quantBars.map((b) => ({
+      symbol,
+      tradeDate: b.date,
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      volume: b.volume,
+      source: "alpha_vantage",
+      version,
+    }))
+    await upsertSnapshots(ohlcBars)
+  } catch {
+    // fallback to existing data if refresh fails
+  }
+}
+
 export async function getAggregatedBars(
   symbol: string,
   interval: Interval = "1d",
   limit = 120,
 ): Promise<OhlcBar[]> {
+  await ensureFreshData(symbol)
+
+  const barsNeeded = limit + 200
+  const estimatedRowsPerBar = interval === "1d" ? 96 : interval === "4h" ? 4 : 1
+  const fetchLimit = Math.min(50000, barsNeeded * estimatedRowsPerBar)
+
   const rows = await prisma.normalizedMarketSnapshot.findMany({
     where: { symbol },
     orderBy: { snapshotDate: "desc" },
-    take: 6000,
-    distinct: ["snapshotDate"],
+    take: fetchLimit,
   })
-  const rawBars: OhlcBar[] = rows.reverse().map((r) => ({
+
+  const byDate = new Map<string, typeof rows[0]>()
+  const SOURCE_PRIORITY: Record<string, number> = { excel: 1, alpha_vantage: 2, yahoo_finance: 3, frankfurter: 4, ecb: 5 }
+
+  for (const r of rows) {
+    const key = r.snapshotDate.toISOString()
+    const existing = byDate.get(key)
+    if (!existing) {
+      byDate.set(key, r)
+    } else {
+      const existingPri = SOURCE_PRIORITY[existing.source] ?? 5
+      const newPri = SOURCE_PRIORITY[r.source] ?? 5
+      if (newPri < existingPri) {
+        byDate.set(key, r)
+      }
+    }
+  }
+
+  const deduped = [...byDate.values()].sort(
+    (a, b) => a.snapshotDate.getTime() - b.snapshotDate.getTime(),
+  )
+
+  const rawBars: OhlcBar[] = deduped.map((r) => ({
     symbol: r.symbol,
     tradeDate: r.snapshotDate,
     open: r.open,
@@ -110,11 +174,16 @@ function formatTradeDate(date: Date, interval: Interval): string {
 }
 
 export async function getDashboard(symbol: string, interval: Interval = "1d") {
-  const limit = interval === "1d" ? 60 : interval === "4h" ? 90 : 120
-  const bars = await getAggregatedBars(symbol, interval, limit)
+  const displayLimit = interval === "1d" ? 60 : interval === "4h" ? 90 : 120
+  const computeLimit = displayLimit + 200
+  const bars = await getAggregatedBars(symbol, interval, computeLimit)
   if (bars.length === 0) return null
 
   const indicatorSeries = await computeIndicatorSeriesFromConfig(bars)
+
+  const displayStart = Math.max(0, bars.length - displayLimit)
+  const displayBars = bars.slice(displayStart)
+  const displayIndicators = indicatorSeries.slice(displayStart)
   const latest = indicatorSeries[bars.length - 1]
 
   const latestPred = await prisma.predictionResult.findFirst({
@@ -122,13 +191,13 @@ export async function getDashboard(symbol: string, interval: Interval = "1d") {
     orderBy: { createdAt: "desc" },
   })
 
-  const series = bars.map((b, i) => ({
+  const series = displayBars.map((b, i) => ({
     tradeDate: formatTradeDate(b.tradeDate, interval),
     open: b.open,
     high: b.high,
     low: b.low,
     close: b.close,
-    ...indicatorSeries[i],
+    ...displayIndicators[i],
   }))
 
   const prev = bars.length >= 2 ? indicatorSeries[bars.length - 2] : undefined
@@ -152,10 +221,12 @@ export async function getDashboard(symbol: string, interval: Interval = "1d") {
     }
   })
 
+  const riskExposure = computeRiskExposureFromBars(displayBars)
+
   return {
     symbol,
     interval,
-    lastUpdatedAt: bars[bars.length - 1].tradeDate.toISOString(),
+    lastUpdatedAt: displayBars[displayBars.length - 1].tradeDate.toISOString(),
     series,
     indicators: latest,
     latestPrediction: latestPred
@@ -168,6 +239,7 @@ export async function getDashboard(symbol: string, interval: Interval = "1d") {
           breakdown: unified.breakdown,
           rationale: unified.rationale,
           dataFreshness: unified.dataFreshness,
+          riskExposure,
           recentHistory,
         }
       : null,
@@ -232,6 +304,7 @@ export async function runPrediction(
       dataSnapshotRefs: JSON.stringify(sourceRefs),
       signalsSnapshot: JSON.stringify(signals),
       indicatorsSnapshot: JSON.stringify(ind),
+      aiAnalysisContent: aiAnalysis.aiAnalysisContent ?? null,
       quantEvidenceJson: JSON.stringify({
         compositeScore: unified.compositeScore,
         breakdown: {
@@ -245,4 +318,53 @@ export async function runPrediction(
   })
 
   return output
+}
+
+function computeRiskExposureFromBars(bars: OhlcBar[]) {
+  if (bars.length < 15) {
+    return { atr14: 0, atr14Pct: 0, maxDrawdownBp: 0, volatilityLevel: "low" as const, riskScore: 0 }
+  }
+
+  const quantBars: QuantBar[] = bars.map((b) => ({
+    date: b.tradeDate,
+    open: b.open,
+    high: b.high,
+    low: b.low,
+    close: b.close,
+    volume: b.volume ?? 0,
+    source: b.source ?? "db",
+  }))
+
+  const atrSeries = computeAtr(quantBars, 14)
+  const atr14 = atrSeries[atrSeries.length - 1]
+  const latestClose = bars[bars.length - 1].close
+  const atr14Pct = (atr14 / latestClose) * 100
+
+  const recentBars = bars.slice(-20)
+  let peak = recentBars[0].close
+  let maxDd = 0
+  for (const bar of recentBars) {
+    if (bar.close > peak) peak = bar.close
+    const dd = (peak - bar.close) / peak
+    if (dd > maxDd) maxDd = dd
+  }
+  const maxDrawdownBp = Math.round(maxDd * 10000)
+
+  let volatilityLevel: "low" | "medium" | "high" | "extreme"
+  if (atr14Pct < 0.15) volatilityLevel = "low"
+  else if (atr14Pct < 0.35) volatilityLevel = "medium"
+  else if (atr14Pct < 0.60) volatilityLevel = "high"
+  else volatilityLevel = "extreme"
+
+  const riskScore = Math.min(100, Math.round(
+    (atr14Pct / 0.6) * 40 + (maxDrawdownBp / 200) * 30 + (volatilityLevel === "extreme" ? 30 : volatilityLevel === "high" ? 20 : volatilityLevel === "medium" ? 10 : 0),
+  ))
+
+  return {
+    atr14: Math.round(atr14 * 10000) / 10000,
+    atr14Pct: Math.round(atr14Pct * 1000) / 1000,
+    maxDrawdownBp,
+    volatilityLevel,
+    riskScore,
+  }
 }

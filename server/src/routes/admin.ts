@@ -607,6 +607,39 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     }
   })
 
+  // ── FinBERT 情感分析 ──
+  app.get("/api/v1/admin/finbert/status", async () => {
+    const { isFinBertAvailable } = await import("../services/ai/finbertAnalyzer.js")
+    const available = await isFinBertAvailable()
+    return ok({ available })
+  })
+
+  app.post("/api/v1/admin/finbert/analyze", async (req, reply) => {
+    const { analyzeWithFinBert, isFinBertAvailable } = await import("../services/ai/finbertAnalyzer.js")
+    const available = await isFinBertAvailable()
+    if (!available) {
+      reply.status(503)
+      return err(503, "FinBERT 服务未启动。请运行: python server/scripts/finbert_service.py")
+    }
+
+    const body = req.body as { texts?: string[] }
+    if (!body.texts?.length) {
+      const recentNews = await prisma.newsRawItem.findMany({
+        where: { fetchedAt: { gte: new Date(Date.now() - 4 * 60 * 60 * 1000) } },
+        orderBy: { fetchedAt: "desc" },
+        take: 30,
+      })
+      if (recentNews.length === 0) {
+        reply.status(404)
+        return err(404, "无最近新闻可分析")
+      }
+      body.texts = recentNews.map((n) => n.summary ? `${n.title}. ${n.summary.slice(0, 150)}` : n.title)
+    }
+
+    const result = await analyzeWithFinBert(body.texts)
+    return ok(result)
+  })
+
   // ── OHLC market data for admin charts ──
   app.get("/api/v1/admin/market-data/ohlc", async (req) => {
     const query = req.query as { symbol?: string; limit?: string }
@@ -682,28 +715,31 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
   // ── Rate trend data (daily aggregated from external API) ──
   app.get("/api/v1/admin/market-data/rate-trend", async (req) => {
-    const query = req.query as { days?: string; queryType?: string }
+    const query = req.query as { days?: string; queryType?: string; granularity?: string }
     const days = Math.min(90, Math.max(7, parseInt(query.days ?? "30")))
     const queryType = (query.queryType ?? "M") as "D" | "W" | "M"
+    const granularity = query.granularity ?? "hourly"
 
     try {
       const { fetchRateTrend, aggregateDailyRates } = await import("../services/market-data/rateFetcher.js")
       const trend = await fetchRateTrend(queryType)
-      const daily = aggregateDailyRates(trend.data)
+      const data = granularity === "daily"
+        ? aggregateDailyRates(trend.data).slice(-days)
+        : trend.data.slice(-(days * 24))
       return ok({
         ccyPair: trend.ccyPair,
         currentRate: trend.currentRate,
         currentDateTime: trend.currentDateTime,
-        data: daily.slice(-days),
+        data,
       })
     } catch (e) {
-      const bars = await getLatestBars(process.env.DEFAULT_SYMBOL ?? "USDCNH", days)
+      const bars = await getLatestBars(process.env.DEFAULT_SYMBOL ?? "USDCNH", days * 24)
       return ok({
         ccyPair: "USD/CNH",
         currentRate: bars.length > 0 ? bars[bars.length - 1].close : null,
         currentDateTime: new Date().toISOString(),
         data: bars.map((b) => ({
-          date: b.tradeDate.toISOString().slice(0, 10),
+          date: b.tradeDate.toISOString().slice(0, 16).replace("T", " "),
           rate: b.close,
         })),
       })

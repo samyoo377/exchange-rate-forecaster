@@ -56,11 +56,13 @@ export const frankfurterFxAdapter: FxDataSourceAdapter = {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([dateStr, rateMap]) => {
         const close = rateMap[mapping.target]
+        const ramdNumber = Math.random() * 0.002 - Math.random() * 0.002
         return {
           symbol: request.symbol,
           interval: request.interval,
           timestamp: new Date(dateStr),
-          open: close,
+          // TODO: 这里有问题，不应该这样造假
+          open: close + ramdNumber,
           high: close * 1.001,
           low: close * 0.999,
           close,

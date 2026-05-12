@@ -59,6 +59,11 @@ export function computeContinuousTechnicalScore(ind: IndicatorValues): number {
   if (ind.ao != null) scores.push(clamp(ind.ao / 0.05, -1, 1))
   if (ind.mom10 != null) scores.push(clamp(ind.mom10 / 0.03, -1, 1))
 
+  if (ind.close != null && ind.pivotPP != null) {
+    const diffBps = ((ind.close - ind.pivotPP) / ind.pivotPP) * 10000
+    scores.push(clamp(-diffBps / 200, -1, 1))
+  }
+
   if (scores.length === 0) return 0
   return scores.reduce((a, b) => a + b, 0) / scores.length
 }

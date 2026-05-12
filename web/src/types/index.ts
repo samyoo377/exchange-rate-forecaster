@@ -17,6 +17,7 @@ export interface OhlcBar {
 }
 
 export interface IndicatorValues {
+  close?: number
   rsi14?: number
   stochK?: number
   stochD?: number
@@ -26,6 +27,40 @@ export interface IndicatorValues {
   minusDi14?: number
   ao?: number
   mom10?: number
+  macd?: number
+  macdSignal?: number
+  macdHist?: number
+  stochRsiK?: number
+  stochRsiD?: number
+  williamsR?: number
+  bullPower?: number
+  bearPower?: number
+  uo?: number
+  ema10?: number
+  ema20?: number
+  ema30?: number
+  ema50?: number
+  ema100?: number
+  ema200?: number
+  sma10?: number
+  sma20?: number
+  sma30?: number
+  sma50?: number
+  sma100?: number
+  sma200?: number
+  vwma?: number
+  hma?: number
+  ichTenkan?: number
+  ichKijun?: number
+  ichSenkouA?: number
+  ichSenkouB?: number
+  pivotPP?: number
+  pivotR1?: number
+  pivotR2?: number
+  pivotR3?: number
+  pivotS1?: number
+  pivotS2?: number
+  pivotS3?: number
 }
 
 export interface LatestPredictionSummary {

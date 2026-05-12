@@ -1,5 +1,7 @@
-import yahooFinance from "yahoo-finance2"
+import YahooFinance from "yahoo-finance2"
 import type { QuantBar } from "../types.js"
+
+const yf = new YahooFinance()
 
 interface YahooQuote {
   date: Date
@@ -16,7 +18,7 @@ export async function fetchFromYahoo(symbol: string, days = 120): Promise<QuantB
   const startDate = new Date()
   startDate.setDate(startDate.getDate() - days)
 
-  const result = await yahooFinance.chart(yahooSymbol, {
+  const result = await yf.chart(yahooSymbol, {
     period1: startDate,
     period2: endDate,
     interval: "1d",
